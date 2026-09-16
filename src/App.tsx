@@ -1,6 +1,5 @@
 // @ts-nocheck
 import React, { useEffect, useMemo, useState } from 'react';
-import html2canvas from 'html2canvas';
 
 /* =========================================================
    CONFIGURACIÓN GENERAL
@@ -717,24 +716,161 @@ export default function App() {
     0
   );
 
-  async function descargarReporteDoctor(item) {
-    const id = `reporte-${slugify(item.clinica)}-${slugify(item.doctor)}`;
-    const elemento = document.getElementById(id);
-
-    if (!elemento) {
-      alert('No se pudo generar el reporte.');
-      return;
-    }
-
+  function descargarReporteDoctor(item) {
     try {
-      const canvas = await html2canvas(elemento, {
-        scale: 3,
-        backgroundColor: '#ffffff',
-        useCORS: true,
+      const canvas = document.createElement('canvas');
+      canvas.width = 1080;
+      canvas.height = 1350;
+
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        alert('No se pudo generar el reporte.');
+        return;
+      }
+
+      const redondeado = (x, y, w, h, r) => {
+        const radio = Math.min(r, w / 2, h / 2);
+        ctx.beginPath();
+        ctx.moveTo(x + radio, y);
+        ctx.arcTo(x + w, y, x + w, y + h, radio);
+        ctx.arcTo(x + w, y + h, x, y + h, radio);
+        ctx.arcTo(x, y + h, x, y, radio);
+        ctx.arcTo(x, y, x + w, y, radio);
+        ctx.closePath();
+      };
+
+      const textoCentrado = (texto, x, y, ancho, font, color) => {
+        ctx.font = font;
+        ctx.fillStyle = color;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(texto, x + ancho / 2, y);
+      };
+
+      // Fondo
+      ctx.fillStyle = '#f4f8fa';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      // Tarjeta principal
+      ctx.fillStyle = '#ffffff';
+      redondeado(55, 55, 970, 1240, 34);
+      ctx.fill();
+
+      // Encabezado
+      const gradiente = ctx.createLinearGradient(55, 55, 1025, 320);
+      gradiente.addColorStop(0, '#082d3f');
+      gradiente.addColorStop(1, '#087b86');
+      ctx.fillStyle = gradiente;
+      redondeado(55, 55, 970, 285, 34);
+      ctx.fill();
+
+      // Marca
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'alphabetic';
+      ctx.font = '900 66px Arial';
+      ctx.fillStyle = '#ffffff';
+      ctx.fillText('IMA', 105, 155);
+      ctx.fillStyle = '#50d7d1';
+      ctx.fillText('DENT', 225, 155);
+
+      ctx.font = '700 24px Arial';
+      ctx.fillStyle = 'rgba(255,255,255,.86)';
+      ctx.fillText('CENTRO RADIOLÓGICO DENTAL', 105, 205);
+
+      ctx.font = '900 30px Arial';
+      ctx.fillStyle = '#ffffff';
+      ctx.fillText('REPORTE DE COMISIONES', 105, 285);
+
+      // Periodo
+      const periodo =
+        mesComisiones === 'TODOS'
+          ? 'Todos los meses'
+          : nombreMes(mesComisiones);
+
+      ctx.textAlign = 'right';
+      ctx.font = '700 22px Arial';
+      ctx.fillStyle = 'rgba(255,255,255,.92)';
+      ctx.fillText(periodo, 970, 150);
+
+      // Doctor
+      ctx.textAlign = 'left';
+      ctx.font = '900 44px Arial';
+      ctx.fillStyle = '#102a3c';
+      ctx.fillText(item.doctor, 105, 430);
+
+      ctx.font = '700 24px Arial';
+      ctx.fillStyle = '#718096';
+      ctx.fillText(item.clinica, 105, 475);
+
+      // Línea
+      ctx.strokeStyle = '#dce8ec';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(105, 520);
+      ctx.lineTo(975, 520);
+      ctx.stroke();
+
+      // Tarjetas de métricas
+      const cards = [
+        ['PACIENTES', String(item.pacientes)],
+        ['DIGITALES', String(item.digitales)],
+        ['IMPRESAS', String(item.impresas)],
+        ['INGRESOS', formatoDinero(item.ingresosGenerados)],
+      ];
+
+      const posiciones = [
+        [105, 570],
+        [555, 570],
+        [105, 770],
+        [555, 770],
+      ];
+
+      cards.forEach((card, index) => {
+        const [x, y] = posiciones[index];
+        ctx.fillStyle = '#f0f7f8';
+        redondeado(x, y, 420, 155, 22);
+        ctx.fill();
+
+        ctx.textAlign = 'left';
+        ctx.font = '800 20px Arial';
+        ctx.fillStyle = '#708093';
+        ctx.fillText(card[0], x + 28, y + 48);
+
+        ctx.font = index === 3 ? '900 34px Arial' : '900 46px Arial';
+        ctx.fillStyle = '#0b737c';
+        ctx.fillText(card[1], x + 28, y + 110);
       });
 
-      const enlace = document.createElement('a');
+      // Total
+      ctx.fillStyle = '#082e3e';
+      redondeado(105, 985, 870, 145, 24);
+      ctx.fill();
 
+      ctx.textAlign = 'left';
+      ctx.font = '900 30px Arial';
+      ctx.fillStyle = '#ffffff';
+      ctx.fillText('TOTAL A PAGAR', 145, 1075);
+
+      ctx.textAlign = 'right';
+      ctx.font = '900 54px Arial';
+      ctx.fillStyle = '#52d4ce';
+      ctx.fillText(formatoDinero(item.comisionTotal), 935, 1083);
+
+      // Nota
+      ctx.textAlign = 'center';
+      ctx.font = '600 20px Arial';
+      ctx.fillStyle = '#778596';
+      ctx.fillText(
+        'Comisiones calculadas según el tipo de entrega registrado.',
+        540,
+        1195
+      );
+
+      ctx.font = '700 18px Arial';
+      ctx.fillStyle = '#0b7b84';
+      ctx.fillText('IMADENT · Control de comisiones', 540, 1245);
+
+      const enlace = document.createElement('a');
       enlace.download =
         `IMADENT-Comision-${slugify(item.doctor)}-${
           mesComisiones === 'TODOS'
