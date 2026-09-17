@@ -1,86 +1,637 @@
-// IMADENT v6 · edición visible + cortes PNG + comisiones PNG
+// IMADENT v7 · sin correo + comisión sí/no + guardado flexible + reportes PNG
 // @ts-nocheck
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 
-const PRECIOS={Panorámica:350,Lateral:350,'Panorámica y Lateral':700};
-const COMISIONES={Digital:50,Impresa:40};
-const CLINICAS_BASE=[
-{id:'MILITARES',nombre:'MILITARES',doctores:['Dra. Paola Martínez','Dr. Xavier Zurita','Dr. Luis Flores','Dra. Itzel Ham','Dra. Aislin Cabrera','Dr. Pedro Bautista']},
-{id:'PRODENTAL',nombre:'PRODENTAL',doctores:['Dra. Fátima Madrid','Dr. José Rodolfo','Dra. Melissa Baray','Dra. Itzel Ham','Dra. Fanny']},
-{id:'CREANDO SONRISAS',nombre:'CREANDO SONRISAS',doctores:['Dr. Luis Flores']},
-{id:'DENTALPRO',nombre:'DENTALPRO',doctores:['Dr. Elder Manuel','Dr. William']},
-{id:'DENTAL EXPRESS',nombre:'DENTAL EXPRESS',doctores:[]},
-{id:'IMADENT',nombre:'IMADENT',doctores:['Dr. Mario Esquivel']},
-{id:'SAN JOSÉ',nombre:'SAN JOSÉ',doctores:['Dr. José Rodolfo']}
+const PRECIOS = {
+  'Panorámica': 350,
+  'Lateral': 350,
+  'Panorámica y Lateral': 700,
+};
+
+const COMISIONES = { Digital: 50, Impresa: 40 };
+
+const CLINICAS_BASE = [
+  { id: 'MILITARES', nombre: 'MILITARES', doctores: ['Dra. Paola Martínez','Dr. Xavier Zurita','Dr. Luis Flores','Dra. Itzel Ham','Dra. Aislin Cabrera','Dr. Pedro Bautista'] },
+  { id: 'PRODENTAL', nombre: 'PRODENTAL', doctores: ['Dra. Fátima Madrid','Dr. José Rodolfo','Dra. Melissa Baray','Dra. Itzel Ham','Dra. Fanny'] },
+  { id: 'CREANDO SONRISAS', nombre: 'CREANDO SONRISAS', doctores: ['Dr. Luis Flores'] },
+  { id: 'DENTALPRO', nombre: 'DENTALPRO', doctores: ['Dr. Elder Manuel','Dr. William'] },
+  { id: 'DENTAL EXPRESS', nombre: 'DENTAL EXPRESS', doctores: [] },
+  { id: 'IMADENT', nombre: 'IMADENT', doctores: ['Dr. Mario Esquivel'] },
+  { id: 'SAN JOSÉ', nombre: 'SAN JOSÉ', doctores: ['Dr. José Rodolfo'] },
 ];
-const FORM_BASE={fecha:'',nombre:'',telefono:'',correo:'',estudio:'Panorámica',tipoPago:'Efectivo',estadoPago:'Pagado',clinica:'',doctor:'',tipoEntrega:'Digital',observaciones:''};
-const pad=n=>String(n).padStart(2,'0');
-const fechaLocal=d=>`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
-const hoy=()=>fechaLocal(new Date());
-const mesActual=()=>hoy().slice(0,7);
-const dinero=n=>Number(n||0).toLocaleString('es-MX',{style:'currency',currency:'MXN',maximumFractionDigits:0});
-const normalizar=(t='')=>t.toString().normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim();
-const slug=(t='')=>normalizar(t).replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');
-function nombreMes(m){if(!m)return'';const[y,mo]=m.split('-').map(Number);return new Intl.DateTimeFormat('es-MX',{month:'long',year:'numeric'}).format(new Date(y,mo-1,1))}
-function lunesDeFecha(fecha){const d=new Date(`${fecha}T00:00:00`),day=d.getDay();d.setDate(d.getDate()+(day===0?-6:1-day));return fechaLocal(d)}
-function finSemana(lunes){const d=new Date(`${lunes}T00:00:00`);d.setDate(d.getDate()+6);return fechaLocal(d)}
-const etiquetaSemana=lunes=>`${lunes} al ${finSemana(lunes)}`;
-function comisionRegistro(r){if(r?.comision!==undefined&&r?.comision!==null&&r?.comision!=='')return Number(r.comision)||0;return Number(COMISIONES[r?.tipoEntrega]||0)}
-const precioRegistro=r=>Number(r?.precio||0);
-function inferirDoctor(r,catalogo){if(r?.doctor&&String(r.doctor).trim())return String(r.doctor).trim();const obs=normalizar(r?.observaciones||'');if(!obs)return'SIN DOCTOR';for(const c of catalogo)for(const d of c.doctores||[]){const n=normalizar(d),corto=n.replace('dra. ','').replace('dr. ','');if(obs.includes(n)||obs.includes(corto))return d}const words=String(r.observaciones||'').trim().split(/\s+/);if(words.length<=6&&String(r.observaciones||'').length<=50)return String(r.observaciones||'').trim();return'SIN DOCTOR'}
-function resumen(lista){const pagos={Efectivo:0,Transferencia:0,Tarjeta:0,Otro:0};let ingresos=0,cobrado=0,pendiente=0,comisiones=0;for(const r of lista){const p=precioRegistro(r);ingresos+=p;comisiones+=comisionRegistro(r);if(r.estadoPago==='Pagado')cobrado+=p;else pendiente+=p;const tp=r.tipoPago||'Otro';pagos[tp]=(pagos[tp]||0)+(r.estadoPago==='Pagado'?p:0)}return{pacientes:lista.length,ingresos,cobrado,pendiente,comisiones,pagos}}
-function descargarTexto(nombre,texto,tipo='application/json'){const blob=new Blob([texto],{type:tipo}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=nombre;a.click();URL.revokeObjectURL(url)}
-const safeName=(s='reporte')=>normalizar(s).replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'')||'reporte';
-function ellipsis(ctx,text,max){let s=String(text??'');if(ctx.measureText(s).width<=max)return s;while(s.length>2&&ctx.measureText(s+'…').width>max)s=s.slice(0,-1);return s+'…'}
-function descargarReportePNG({titulo,subtitulo,resumenLineas=[],columnas=[],filas=[],archivo='reporte.png'}){const width=1500,margin=70,headerH=190,lineH=42,rowH=46,tableH=columnas.length?70+Math.max(1,filas.length)*rowH:0,summaryH=resumenLineas.length?45+resumenLineas.length*lineH:0,height=Math.max(720,margin*2+headerH+summaryH+tableH+80),canvas=document.createElement('canvas');canvas.width=width;canvas.height=height;const ctx=canvas.getContext('2d');if(!ctx)return;ctx.fillStyle='#f4f8fa';ctx.fillRect(0,0,width,height);ctx.fillStyle='#073b45';ctx.fillRect(0,0,width,headerH);ctx.fillStyle='#fff';ctx.font='700 52px Arial';ctx.fillText('IMA DENT',margin,82);ctx.font='700 34px Arial';ctx.fillText(titulo,margin,137);ctx.font='24px Arial';ctx.fillStyle='#cdebf0';ctx.fillText(subtitulo,margin,174);let y=headerH+55;if(resumenLineas.length){ctx.fillStyle='#fff';ctx.strokeStyle='#d6e3e7';ctx.lineWidth=2;ctx.beginPath();ctx.roundRect(margin,y-25,width-margin*2,summaryH,18);ctx.fill();ctx.stroke();let sy=y+16;ctx.fillStyle='#20333a';ctx.font='700 27px Arial';ctx.fillText('Resumen',margin+28,sy);sy+=42;ctx.font='24px Arial';for(const line of resumenLineas){ctx.fillStyle='#344b54';ctx.fillText(line,margin+28,sy);sy+=lineH}y+=summaryH+25}if(columnas.length){const totalW=width-margin*2,sum=columnas.reduce((a,c)=>a+(c.peso||1),0),widths=columnas.map(c=>totalW*(c.peso||1)/sum);ctx.fillStyle='#0b7f89';ctx.fillRect(margin,y,totalW,56);let x=margin;ctx.font='700 22px Arial';ctx.fillStyle='#fff';columnas.forEach((c,i)=>{ctx.fillText(ellipsis(ctx,c.titulo,widths[i]-20),x+10,y+36);x+=widths[i]});y+=56;ctx.font='21px Arial';if(!filas.length){ctx.fillStyle='#fff';ctx.fillRect(margin,y,totalW,rowH);ctx.fillStyle='#718089';ctx.fillText('Sin registros',margin+15,y+31)}else filas.forEach((fila,ri)=>{ctx.fillStyle=ri%2===0?'#fff':'#eef5f7';ctx.fillRect(margin,y,totalW,rowH);let xx=margin;ctx.fillStyle='#24373e';columnas.forEach((c,i)=>{const val=typeof c.valor==='function'?c.valor(fila):fila[c.clave];ctx.fillText(ellipsis(ctx,val??'',widths[i]-20),xx+10,y+31);xx+=widths[i]});y+=rowH})}ctx.fillStyle='#668089';ctx.font='20px Arial';ctx.fillText(`Generado ${new Date().toLocaleString('es-MX')}`,margin,height-35);const a=document.createElement('a');a.download=archivo;a.href=canvas.toDataURL('image/png',1);a.click()}
+
+const FORM_BASE = {
+  fecha: '',
+  nombre: '',
+  telefono: '',
+  estudio: 'Panorámica',
+  tipoPago: 'Efectivo',
+  estadoPago: 'Pagado',
+  clinica: '',
+  doctor: '',
+  tipoEntrega: 'Digital',
+  generaComision: true,
+  observaciones: '',
+};
+
+const pad = n => String(n).padStart(2, '0');
+const fechaLocal = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+const hoy = () => fechaLocal(new Date());
+const mesActual = () => hoy().slice(0,7);
+const dinero = n => Number(n || 0).toLocaleString('es-MX', { style:'currency', currency:'MXN', maximumFractionDigits:0 });
+const normalizar = (t='') => t.toString().normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim();
+const slug = (t='') => normalizar(t).replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'') || 'item';
+const nombreSeguro = (t='reporte') => slug(t);
+
+function nombreMes(m){
+  if(!m) return '';
+  const [y,mo] = m.split('-').map(Number);
+  return new Intl.DateTimeFormat('es-MX',{month:'long',year:'numeric'}).format(new Date(y,mo-1,1));
+}
+function lunesDeFecha(fecha){
+  if(!fecha) return '';
+  const d = new Date(`${fecha}T00:00:00`);
+  const day = d.getDay();
+  d.setDate(d.getDate() + (day === 0 ? -6 : 1-day));
+  return fechaLocal(d);
+}
+function finSemana(lunes){
+  if(!lunes) return '';
+  const d = new Date(`${lunes}T00:00:00`);
+  d.setDate(d.getDate()+6);
+  return fechaLocal(d);
+}
+const etiquetaSemana = lunes => `${lunes} al ${finSemana(lunes)}`;
+
+function generaComisionRegistro(r){
+  return r?.generaComision !== false;
+}
+function comisionRegistro(r){
+  if(!generaComisionRegistro(r)) return 0;
+  if(r?.comision !== undefined && r?.comision !== null && r?.comision !== '') return Number(r.comision) || 0;
+  return Number(COMISIONES[r?.tipoEntrega] || 0);
+}
+const precioRegistro = r => Number(r?.precio ?? PRECIOS[r?.estudio] ?? 0);
+
+function inferirDoctor(r, catalogo){
+  if(r?.doctor && String(r.doctor).trim()) return String(r.doctor).trim();
+  const obs = normalizar(r?.observaciones || '');
+  if(!obs) return 'SIN DOCTOR';
+  for(const c of catalogo){
+    for(const d of c.doctores || []){
+      const n = normalizar(d);
+      const corto = n.replace('dra. ','').replace('dr. ','');
+      if(obs.includes(n) || (corto && obs.includes(corto))) return d;
+    }
+  }
+  return 'SIN DOCTOR';
+}
+
+function resumen(lista){
+  const pagos = { Efectivo:0, Transferencia:0, Tarjeta:0, Otro:0 };
+  let ingresos=0, cobrado=0, pendiente=0, comisiones=0, conComision=0, sinComision=0;
+  for(const r of lista){
+    const p = precioRegistro(r);
+    ingresos += p;
+    comisiones += comisionRegistro(r);
+    if(generaComisionRegistro(r)) conComision++; else sinComision++;
+    if(r.estadoPago === 'Pagado') {
+      cobrado += p;
+      const tp = r.tipoPago || 'Otro';
+      pagos[tp] = (pagos[tp] || 0) + p;
+    } else {
+      pendiente += p;
+    }
+  }
+  return { pacientes:lista.length, ingresos, cobrado, pendiente, comisiones, pagos, conComision, sinComision };
+}
+
+function descargarTexto(nombre, texto, tipo='application/json'){
+  const blob = new Blob([texto], {type:tipo});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = nombre; a.click();
+  URL.revokeObjectURL(url);
+}
+function ellipsis(ctx,text,max){
+  let s = String(text ?? '');
+  if(ctx.measureText(s).width <= max) return s;
+  while(s.length > 2 && ctx.measureText(s+'…').width > max) s=s.slice(0,-1);
+  return s+'…';
+}
+function descargarReportePNG({titulo,subtitulo,resumenLineas=[],columnas=[],filas=[],archivo='reporte.png'}){
+  const width=1600, margin=70, headerH=200, lineH=42, rowH=48;
+  const summaryH = resumenLineas.length ? 60 + resumenLineas.length*lineH : 0;
+  const tableH = columnas.length ? 70 + Math.max(1,filas.length)*rowH : 0;
+  const height = Math.max(760, margin*2 + headerH + summaryH + tableH + 70);
+  const canvas = document.createElement('canvas');
+  canvas.width=width; canvas.height=height;
+  const ctx = canvas.getContext('2d');
+  if(!ctx) return;
+
+  ctx.fillStyle='#f3f7f8'; ctx.fillRect(0,0,width,height);
+  ctx.fillStyle='#073b45'; ctx.fillRect(0,0,width,headerH);
+  ctx.fillStyle='#fff'; ctx.font='700 54px Arial'; ctx.fillText('IMA DENT',margin,82);
+  ctx.font='700 34px Arial'; ctx.fillText(titulo,margin,140);
+  ctx.font='24px Arial'; ctx.fillStyle='#cdebf0'; ctx.fillText(subtitulo,margin,177);
+
+  let y=headerH+55;
+  if(resumenLineas.length){
+    ctx.fillStyle='#fff'; ctx.strokeStyle='#d5e3e6'; ctx.lineWidth=2;
+    ctx.beginPath(); ctx.roundRect(margin,y-25,width-margin*2,summaryH,18); ctx.fill(); ctx.stroke();
+    let sy=y+17;
+    ctx.fillStyle='#20343b'; ctx.font='700 28px Arial'; ctx.fillText('Resumen',margin+28,sy);
+    sy+=44; ctx.font='24px Arial';
+    for(const line of resumenLineas){ctx.fillStyle='#344b54';ctx.fillText(line,margin+28,sy);sy+=lineH}
+    y += summaryH+25;
+  }
+
+  if(columnas.length){
+    const totalW=width-margin*2, sum=columnas.reduce((a,c)=>a+(c.peso||1),0);
+    const widths=columnas.map(c=>totalW*(c.peso||1)/sum);
+    ctx.fillStyle='#0b7f89';ctx.fillRect(margin,y,totalW,58);
+    let x=margin;ctx.font='700 21px Arial';ctx.fillStyle='#fff';
+    columnas.forEach((c,i)=>{ctx.fillText(ellipsis(ctx,c.titulo,widths[i]-18),x+9,y+37);x+=widths[i]});
+    y+=58;ctx.font='20px Arial';
+    if(!filas.length){
+      ctx.fillStyle='#fff';ctx.fillRect(margin,y,totalW,rowH);
+      ctx.fillStyle='#718089';ctx.fillText('Sin registros',margin+15,y+32);
+    } else {
+      filas.forEach((fila,ri)=>{
+        ctx.fillStyle=ri%2===0?'#fff':'#edf5f6';ctx.fillRect(margin,y,totalW,rowH);
+        let xx=margin;ctx.fillStyle='#24373e';
+        columnas.forEach((c,i)=>{
+          const val=typeof c.valor==='function'?c.valor(fila):fila[c.clave];
+          ctx.fillText(ellipsis(ctx,val??'',widths[i]-18),xx+9,y+32);xx+=widths[i];
+        });
+        y+=rowH;
+      });
+    }
+  }
+  ctx.fillStyle='#698088';ctx.font='20px Arial';
+  ctx.fillText(`Generado ${new Date().toLocaleString('es-MX')}`,margin,height-32);
+  const a=document.createElement('a');a.download=archivo;a.href=canvas.toDataURL('image/png',1);a.click();
+}
 
 export default function App(){
-const[seccion,setSeccion]=useState('dashboard');
-const[registros,setRegistros]=useState(()=>{try{return JSON.parse(localStorage.getItem('imadent_registros')||'[]')}catch{return[]}});
-const[clinicas,setClinicas]=useState(()=>{try{return JSON.parse(localStorage.getItem('imadent_catalogo_clinicas')||'null')||CLINICAS_BASE}catch{return CLINICAS_BASE}});
-const[form,setForm]=useState({...FORM_BASE,fecha:hoy()});
-const[editId,setEditId]=useState(null),[busqueda,setBusqueda]=useState(''),[filtro,setFiltro]=useState('semana'),[mesHist,setMesHist]=useState(mesActual()),[semanaCorte,setSemanaCorte]=useState(lunesDeFecha(hoy())),[mesCom,setMesCom]=useState(mesActual());
-const[nuevaClinica,setNuevaClinica]=useState(''),[clinicaAdmin,setClinicaAdmin]=useState(''),[nombreClinicaEdit,setNombreClinicaEdit]=useState(''),[nuevoDoctor,setNuevoDoctor]=useState(''),[doctorAdmin,setDoctorAdmin]=useState(''),[nombreDoctorEdit,setNombreDoctorEdit]=useState('');
-const importRef=useRef(null);
-useEffect(()=>localStorage.setItem('imadent_registros',JSON.stringify(registros)),[registros]);
-useEffect(()=>localStorage.setItem('imadent_catalogo_clinicas',JSON.stringify(clinicas)),[clinicas]);
-const clinicaForm=useMemo(()=>clinicas.find(c=>c.nombre===form.clinica),[clinicas,form.clinica]),doctoresForm=clinicaForm?.doctores||[],semanaActual=lunesDeFecha(hoy());
-const regsSemana=useMemo(()=>registros.filter(r=>r.fecha&&lunesDeFecha(r.fecha)===semanaActual),[registros,semanaActual]),regsMes=useMemo(()=>registros.filter(r=>(r.fecha||'').slice(0,7)===mesActual()),[registros]),resSemana=useMemo(()=>resumen(regsSemana),[regsSemana]),resMes=useMemo(()=>resumen(regsMes),[regsMes]);
-const semanasDisponibles=useMemo(()=>{const set=new Set([lunesDeFecha(hoy())]);registros.forEach(r=>r.fecha&&set.add(lunesDeFecha(r.fecha)));return[...set].sort().reverse()},[registros]);
-const mesesDisponibles=useMemo(()=>{const set=new Set([mesActual()]);registros.forEach(r=>r.fecha&&set.add(r.fecha.slice(0,7)));return[...set].sort().reverse()},[registros]);
-const registrosLista=useMemo(()=>{let list=[...registros];if(filtro==='hoy')list=list.filter(r=>r.fecha===hoy());if(filtro==='semana')list=list.filter(r=>r.fecha&&lunesDeFecha(r.fecha)===semanaActual);if(filtro==='mes')list=list.filter(r=>(r.fecha||'').slice(0,7)===mesActual());if(filtro==='pendiente')list=list.filter(r=>r.estadoPago!=='Pagado');if(busqueda.trim()){const q=normalizar(busqueda);list=list.filter(r=>[r.nombre,r.clinica,inferirDoctor(r,clinicas),r.estudio,r.folio].some(v=>normalizar(v||'').includes(q)))}return list.sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||'')||Number(b.id||0)-Number(a.id||0))},[registros,filtro,busqueda,clinicas,semanaActual]);
-const regsHist=useMemo(()=>registros.filter(r=>(r.fecha||'').slice(0,7)===mesHist).sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||'')),[registros,mesHist]);
-const regsCorte=useMemo(()=>registros.filter(r=>r.fecha&&lunesDeFecha(r.fecha)===semanaCorte).sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||'')),[registros,semanaCorte]),resCorte=useMemo(()=>resumen(regsCorte),[regsCorte]);
-const regsCom=useMemo(()=>registros.filter(r=>(r.fecha||'').slice(0,7)===mesCom),[registros,mesCom]);
-const comClinicas=useMemo(()=>{const map={};for(const r of regsCom){const n=r.clinica||'SIN CLÍNICA';if(!map[n])map[n]={nombre:n,pacientes:0,digital:0,impresa:0,total:0};map[n].pacientes++;const c=comisionRegistro(r);map[n].total+=c;if(r.tipoEntrega==='Impresa')map[n].impresa+=c;else map[n].digital+=c}return Object.values(map).sort((a,b)=>a.nombre.localeCompare(b.nombre))},[regsCom]);
-const comDoctores=useMemo(()=>{const map={};for(const r of regsCom){const n=inferirDoctor(r,clinicas);if(!map[n])map[n]={nombre:n,pacientes:0,total:0,clinicas:{}};map[n].pacientes++;map[n].total+=comisionRegistro(r);const c=r.clinica||'SIN CLÍNICA';map[n].clinicas[c]=(map[n].clinicas[c]||0)+comisionRegistro(r)}return Object.values(map).sort((a,b)=>a.nombre.localeCompare(b.nombre))},[regsCom,clinicas]);
-const totalComMes=useMemo(()=>regsCom.reduce((s,r)=>s+comisionRegistro(r),0),[regsCom]);
-function setCampo(k,v){setForm(f=>({...f,[k]:v}))}
-function limpiar(){setForm({...FORM_BASE,fecha:hoy()});setEditId(null)}
-function guardar(){if(!form.fecha||!form.nombre.trim()||!form.clinica||!form.doctor){alert('Completa fecha, paciente, clínica y doctor.');return}const base={...form,nombre:form.nombre.trim(),telefono:form.telefono.trim(),correo:form.correo.trim(),observaciones:form.observaciones.trim(),precio:PRECIOS[form.estudio]||0,comision:COMISIONES[form.tipoEntrega]||0};if(editId!==null)setRegistros(rs=>rs.map(r=>r.id===editId?{...r,...base}:r));else setRegistros(rs=>[{...base,id:Date.now(),folio:`IMA-${Date.now()}`},...rs]);limpiar();setSeccion('pacientes')}
-function editar(r){const d=inferirDoctor(r,clinicas);setEditId(r.id);setForm({fecha:r.fecha||hoy(),nombre:r.nombre||'',telefono:r.telefono||'',correo:r.correo||'',estudio:r.estudio||'Panorámica',tipoPago:r.tipoPago||'Efectivo',estadoPago:r.estadoPago||'Pagado',clinica:r.clinica||'',doctor:d==='SIN DOCTOR'?'':d,tipoEntrega:r.tipoEntrega||'Digital',observaciones:r.observaciones||''});setSeccion('pacientes');setTimeout(()=>window.scrollTo({top:0,behavior:'smooth'}),50)}
-function borrar(id){if(confirm('¿Eliminar este paciente?'))setRegistros(rs=>rs.filter(r=>r.id!==id))}
-function agregarClinica(){const n=nuevaClinica.trim();if(!n)return;if(clinicas.some(c=>normalizar(c.nombre)===normalizar(n))){alert('La clínica ya existe.');return}setClinicas(cs=>[...cs,{id:`${slug(n)}-${Date.now()}`,nombre:n,doctores:[]}]);setNuevaClinica('')}
-function seleccionarClinicaAdmin(nombre){setClinicaAdmin(nombre);setNombreClinicaEdit(nombre);setDoctorAdmin('');setNombreDoctorEdit('')}
-function renombrarClinica(){const nuevo=nombreClinicaEdit.trim();if(!clinicaAdmin||!nuevo)return;if(clinicas.some(c=>c.nombre!==clinicaAdmin&&normalizar(c.nombre)===normalizar(nuevo))){alert('Ya existe otra clínica con ese nombre.');return}setClinicas(cs=>cs.map(c=>c.nombre===clinicaAdmin?{...c,nombre:nuevo,id:c.id||`${slug(nuevo)}-${Date.now()}`}:c));setRegistros(rs=>rs.map(r=>r.clinica===clinicaAdmin?{...r,clinica:nuevo}:r));if(form.clinica===clinicaAdmin)setCampo('clinica',nuevo);setClinicaAdmin(nuevo);setNombreClinicaEdit(nuevo);alert('Nombre de clínica actualizado también en el historial.')}
-function eliminarClinica(){if(!clinicaAdmin)return;if(!confirm(`¿Quitar ${clinicaAdmin} del catálogo? Los pacientes históricos NO se borran.`))return;setClinicas(cs=>cs.filter(c=>c.nombre!==clinicaAdmin));setClinicaAdmin('');setNombreClinicaEdit('')}
-function agregarDoctor(){const n=nuevoDoctor.trim();if(!clinicaAdmin||!n)return;setClinicas(cs=>cs.map(c=>c.nombre===clinicaAdmin&&!(c.doctores||[]).some(d=>normalizar(d)===normalizar(n))?{...c,doctores:[...(c.doctores||[]),n]}:c));setNuevoDoctor('')}
-function seleccionarDoctorAdmin(n){setDoctorAdmin(n);setNombreDoctorEdit(n)}
-function renombrarDoctor(){const nuevo=nombreDoctorEdit.trim();if(!clinicaAdmin||!doctorAdmin||!nuevo)return;setClinicas(cs=>cs.map(c=>c.nombre===clinicaAdmin?{...c,doctores:(c.doctores||[]).map(d=>d===doctorAdmin?nuevo:d)}:c));setRegistros(rs=>rs.map(r=>r.clinica===clinicaAdmin&&r.doctor===doctorAdmin?{...r,doctor:nuevo}:r));setDoctorAdmin(nuevo);setNombreDoctorEdit(nuevo)}
-function eliminarDoctor(){if(!clinicaAdmin||!doctorAdmin)return;if(!confirm(`¿Quitar ${doctorAdmin} del catálogo?`))return;setClinicas(cs=>cs.map(c=>c.nombre===clinicaAdmin?{...c,doctores:(c.doctores||[]).filter(d=>d!==doctorAdmin)}:c));setDoctorAdmin('');setNombreDoctorEdit('')}
-function pngCorte(){descargarReportePNG({titulo:'Corte semanal',subtitulo:etiquetaSemana(semanaCorte),archivo:`corte-semanal-${semanaCorte}.png`,resumenLineas:[`Pacientes: ${resCorte.pacientes} · Ingresos: ${dinero(resCorte.ingresos)} · Cobrado: ${dinero(resCorte.cobrado)}`,`Pendiente: ${dinero(resCorte.pendiente)} · Comisiones: ${dinero(resCorte.comisiones)}`,`Efectivo: ${dinero(resCorte.pagos.Efectivo||0)} · Transferencia: ${dinero(resCorte.pagos.Transferencia||0)} · Tarjeta: ${dinero(resCorte.pagos.Tarjeta||0)}`],columnas:[{titulo:'Fecha',clave:'fecha',peso:1},{titulo:'Paciente',clave:'nombre',peso:2.4},{titulo:'Estudio',clave:'estudio',peso:2},{titulo:'Clínica',clave:'clinica',peso:1.8},{titulo:'Pago',valor:r=>dinero(precioRegistro(r)),peso:1.3}],filas:regsCorte})}
-function pngResumenClinicas(){descargarReportePNG({titulo:'Comisiones por clínica',subtitulo:nombreMes(mesCom),archivo:`comisiones-clinicas-${mesCom}.png`,resumenLineas:[`Total del mes: ${dinero(totalComMes)} · Pacientes: ${regsCom.length}`],columnas:[{titulo:'Clínica',clave:'nombre',peso:3},{titulo:'Pacientes',clave:'pacientes',peso:1},{titulo:'Digital',valor:r=>dinero(r.digital),peso:1.3},{titulo:'Impresa',valor:r=>dinero(r.impresa),peso:1.3},{titulo:'Total',valor:r=>dinero(r.total),peso:1.4}],filas:comClinicas})}
-function pngClinica(c){const lista=regsCom.filter(r=>(r.clinica||'SIN CLÍNICA')===c.nombre),doct={};lista.forEach(r=>{const d=inferirDoctor(r,clinicas);if(!doct[d])doct[d]={nombre:d,pacientes:0,total:0};doct[d].pacientes++;doct[d].total+=comisionRegistro(r)});descargarReportePNG({titulo:`Comisiones · ${c.nombre}`,subtitulo:nombreMes(mesCom),archivo:`comision-${safeName(c.nombre)}-${mesCom}.png`,resumenLineas:[`Pacientes: ${c.pacientes} · Comisión total: ${dinero(c.total)}`,`Digital: ${dinero(c.digital)} · Impresa: ${dinero(c.impresa)}`],columnas:[{titulo:'Dentista',clave:'nombre',peso:3},{titulo:'Pacientes',clave:'pacientes',peso:1},{titulo:'Comisión',valor:r=>dinero(r.total),peso:1.4}],filas:Object.values(doct)})}
-function pngResumenDoctores(){descargarReportePNG({titulo:'Comisiones por dentista',subtitulo:nombreMes(mesCom),archivo:`comisiones-dentistas-${mesCom}.png`,resumenLineas:[`Total del mes: ${dinero(totalComMes)} · Pacientes: ${regsCom.length}`],columnas:[{titulo:'Dentista',clave:'nombre',peso:3.2},{titulo:'Pacientes',clave:'pacientes',peso:1},{titulo:'Comisión',valor:r=>dinero(r.total),peso:1.5}],filas:comDoctores})}
-function pngDoctor(d){const filas=Object.entries(d.clinicas).map(([nombre,total])=>({nombre,total}));descargarReportePNG({titulo:`Comisiones · ${d.nombre}`,subtitulo:nombreMes(mesCom),archivo:`comision-${safeName(d.nombre)}-${mesCom}.png`,resumenLineas:[`Pacientes: ${d.pacientes} · Comisión total: ${dinero(d.total)}`],columnas:[{titulo:'Clínica',clave:'nombre',peso:3},{titulo:'Comisión',valor:r=>dinero(r.total),peso:1.5}],filas})}
-function exportarRespaldo(){descargarTexto(`imadent-respaldo-${hoy()}.json`,JSON.stringify({registros,clinicas,fecha:hoy()},null,2))}
-function importarRespaldo(file){if(!file)return;const rd=new FileReader();rd.onload=()=>{try{const d=JSON.parse(String(rd.result||''));if(Array.isArray(d.registros))setRegistros(d.registros);if(Array.isArray(d.clinicas))setClinicas(d.clinicas);alert('Respaldo restaurado.')}catch{alert('El archivo no es válido.')}};rd.readAsText(file)}
-const nav=[['dashboard','📊 Panel'],['pacientes','👤 Pacientes'],['cortes','🧾 Cortes'],['comisiones','💰 Comisiones'],['clinicas','🏥 Clínicas y doctores'],['respaldo','💾 Respaldo']];
-return <div className="app"><style>{`*{box-sizing:border-box}body{background:#eef3f5!important;color:#182b33!important}.app{font-family:Inter,system-ui,Segoe UI,Arial,sans-serif;min-height:100vh;background:#eef3f5;color:#182b33;text-align:left}.top{background:linear-gradient(135deg,#062f38,#0b5661);color:white;padding:24px 30px;display:flex;justify-content:space-between;gap:20px;align-items:center}.brand{font-size:30px;font-weight:900;letter-spacing:2px}.brand small{display:block;font-size:13px;letter-spacing:0;font-weight:500;opacity:.8;margin-top:4px}.date{background:#ffffff18;border:1px solid #ffffff2b;padding:10px 14px;border-radius:12px;font-weight:700}.nav{display:flex;gap:8px;flex-wrap:wrap;padding:14px 20px;background:#fff;border-bottom:1px solid #dbe5e8;position:sticky;top:0;z-index:10}.nav button{border:1px solid #dfe8eb;background:#f7fafb;color:#314a53;padding:10px 14px;border-radius:10px;font-weight:800;cursor:pointer}.nav button.on{background:#0b7f89;color:#fff;border-color:#0b7f89}.main{padding:24px;max-width:1500px;margin:auto}.title{font-size:30px;font-weight:900;margin:0 0 5px}.sub{color:#677d85;margin:0 0 20px}.grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}.kpi{background:#fff;border:1px solid #dbe5e8;border-radius:16px;padding:18px}.kpi b{display:block;font-size:13px;color:#6d8188;text-transform:uppercase}.kpi strong{display:block;font-size:29px;margin-top:4px;color:#17323b}.accent{border-top:4px solid #0b8994}.card{background:#fff;border:1px solid #dbe5e8;border-radius:18px;padding:20px;margin-top:18px;box-shadow:0 3px 14px #17323b0a}.card h2{font-size:20px;margin:0 0 16px;color:#17323b}.row{display:flex;gap:10px;flex-wrap:wrap;align-items:end}.fields{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.field label{display:block;font-size:12px;font-weight:900;color:#49616a;margin:0 0 5px;text-transform:uppercase}input,select,textarea{width:100%;border:1px solid #bdcdd2!important;background:#fff!important;color:#152a32!important;-webkit-text-fill-color:#152a32!important;caret-color:#152a32!important;opacity:1!important;color-scheme:light!important;padding:11px 12px;border-radius:10px;font:inherit;outline:none}input::placeholder,textarea::placeholder{color:#879aa0!important;-webkit-text-fill-color:#879aa0!important}input:focus,select:focus,textarea:focus{border-color:#0b8791!important;box-shadow:0 0 0 3px #0b87911b!important}textarea{min-height:88px;resize:vertical}.btn{border:0;border-radius:10px;padding:11px 15px;font-weight:900;cursor:pointer}.primary{background:#0b7f89;color:#fff}.light{background:#eaf3f5;color:#1c4e57}.danger{background:#fff0f1;color:#a1323d}.small{padding:7px 10px;font-size:12px}.buttons{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}.toolbar{display:grid;grid-template-columns:2fr repeat(5,auto);gap:8px;align-items:center;margin-bottom:14px}.chip{border:1px solid #d7e3e6;background:#f7fafb;color:#35515a;border-radius:999px;padding:8px 12px;font-weight:800;cursor:pointer}.chip.on{background:#0b7f89;color:white}.table{overflow:auto;border:1px solid #e1e9eb;border-radius:12px}.table table{width:100%;border-collapse:collapse;min-width:900px}.table th{background:#eef5f6;color:#48616a;font-size:12px;text-transform:uppercase;text-align:left;padding:11px}.table td{padding:11px;border-top:1px solid #edf2f3;color:#263d45}.table tr:hover td{background:#fbfdfd}.money{font-weight:900;color:#0a6971}.two{display:grid;grid-template-columns:1fr 1fr;gap:18px}.notice{padding:12px 14px;border-radius:10px;background:#eaf6f7;color:#14545b;font-weight:700}.adminBox{border:1px solid #e0e8ea;border-radius:14px;padding:16px;margin-top:12px}.adminBox h3{margin:0 0 12px}.reportTop{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:end}.reportTop .field{min-width:260px}.empty{padding:28px;text-align:center;color:#7b8f96}@media(max-width:1000px){.grid{grid-template-columns:repeat(2,1fr)}.fields{grid-template-columns:repeat(2,1fr)}.two{grid-template-columns:1fr}.toolbar{display:flex;flex-wrap:wrap}.toolbar input{min-width:220px}.main{padding:16px}.top{padding:18px}}@media(max-width:620px){.grid,.fields{grid-template-columns:1fr}.brand{font-size:25px}.date{display:none}.nav{position:static}.main{padding:12px}.card{padding:14px}}`}</style><header className="top"><div className="brand">IMA DENT<small>Centro Radiológico Dental · Sistema administrativo</small></div><div className="date">{new Date().toLocaleDateString('es-MX',{day:'numeric',month:'long',year:'numeric'})}</div></header><nav className="nav">{nav.map(([k,l])=><button key={k} className={seccion===k?'on':''} onClick={()=>setSeccion(k)}>{l}</button>)}</nav><main className="main">
-{seccion==='dashboard'&&<><h1 className="title">Panel de control</h1><p className="sub">Vista rápida de esta semana y del mes actual.</p><div className="grid"><div className="kpi accent"><b>Pacientes esta semana</b><strong>{resSemana.pacientes}</strong></div><div className="kpi accent"><b>Ingresos semana</b><strong>{dinero(resSemana.ingresos)}</strong></div><div className="kpi"><b>Pendiente semana</b><strong>{dinero(resSemana.pendiente)}</strong></div><div className="kpi"><b>Comisiones semana</b><strong>{dinero(resSemana.comisiones)}</strong></div><div className="kpi"><b>Pacientes del mes</b><strong>{resMes.pacientes}</strong></div><div className="kpi"><b>Ingresos del mes</b><strong>{dinero(resMes.ingresos)}</strong></div><div className="kpi"><b>Cobrado del mes</b><strong>{dinero(resMes.cobrado)}</strong></div><div className="kpi"><b>Comisiones del mes</b><strong>{dinero(resMes.comisiones)}</strong></div></div><div className="card"><h2>Accesos rápidos</h2><div className="buttons"><button className="btn primary" onClick={()=>setSeccion('pacientes')}>+ Registrar paciente</button><button className="btn light" onClick={()=>setSeccion('cortes')}>Descargar corte semanal</button><button className="btn light" onClick={()=>setSeccion('comisiones')}>Comisiones del mes</button></div></div></>}
-{seccion==='pacientes'&&<><h1 className="title">Pacientes</h1><p className="sub">Registra o modifica datos. Los campos ahora muestran el texto claramente.</p><div className="card"><h2>{editId!==null?'Modificar paciente':'Nuevo paciente'}</h2><div className="fields"><div className="field"><label>Fecha</label><input type="date" value={form.fecha} onChange={e=>setCampo('fecha',e.target.value)}/></div><div className="field"><label>Nombre del paciente</label><input placeholder="Nombre completo" value={form.nombre} onChange={e=>setCampo('nombre',e.target.value)}/></div><div className="field"><label>Teléfono</label><input placeholder="Teléfono" value={form.telefono} onChange={e=>setCampo('telefono',e.target.value)}/></div><div className="field"><label>Correo</label><input placeholder="Correo opcional" value={form.correo} onChange={e=>setCampo('correo',e.target.value)}/></div><div className="field"><label>Estudio</label><select value={form.estudio} onChange={e=>setCampo('estudio',e.target.value)}>{Object.keys(PRECIOS).map(x=><option key={x}>{x}</option>)}</select></div><div className="field"><label>Precio</label><input value={dinero(PRECIOS[form.estudio])} readOnly/></div><div className="field"><label>Clínica</label><select value={form.clinica} onChange={e=>{setCampo('clinica',e.target.value);setCampo('doctor','')}}><option value="">Seleccionar clínica</option>{clinicas.map(c=><option key={c.id||c.nombre} value={c.nombre}>{c.nombre}</option>)}</select></div><div className="field"><label>Dentista</label><select value={form.doctor} onChange={e=>setCampo('doctor',e.target.value)}><option value="">Seleccionar dentista</option>{doctoresForm.map(d=><option key={d}>{d}</option>)}</select></div><div className="field"><label>Forma de pago</label><select value={form.tipoPago} onChange={e=>setCampo('tipoPago',e.target.value)}><option>Efectivo</option><option>Transferencia</option><option>Tarjeta</option><option>Otro</option></select></div><div className="field"><label>Estado</label><select value={form.estadoPago} onChange={e=>setCampo('estadoPago',e.target.value)}><option>Pagado</option><option>Pendiente</option></select></div><div className="field"><label>Entrega</label><select value={form.tipoEntrega} onChange={e=>setCampo('tipoEntrega',e.target.value)}><option>Digital</option><option>Impresa</option></select></div><div className="field"><label>Comisión</label><input value={dinero(COMISIONES[form.tipoEntrega])} readOnly/></div></div><div className="field" style={{marginTop:12}}><label>Observaciones</label><textarea value={form.observaciones} onChange={e=>setCampo('observaciones',e.target.value)} placeholder="Observaciones opcionales"/></div><div className="buttons"><button className="btn primary" onClick={guardar}>{editId!==null?'Guardar cambios':'Guardar paciente'}</button>{editId!==null&&<button className="btn light" onClick={limpiar}>Cancelar edición</button>}</div></div><div className="card"><h2>Pacientes registrados</h2><div className="toolbar"><input placeholder="Buscar paciente, clínica o dentista" value={busqueda} onChange={e=>setBusqueda(e.target.value)}/>{[['hoy','Hoy'],['semana','Esta semana'],['mes','Este mes'],['pendiente','Pendientes'],['todos','Todos']].map(([k,l])=><button key={k} className={`chip ${filtro===k?'on':''}`} onClick={()=>setFiltro(k)}>{l}</button>)}</div><div className="table"><table><thead><tr><th>Fecha</th><th>Paciente</th><th>Estudio</th><th>Clínica</th><th>Dentista</th><th>Precio</th><th>Pago</th><th>Acciones</th></tr></thead><tbody>{registrosLista.length?registrosLista.map(r=><tr key={r.id}><td>{r.fecha}</td><td><b>{r.nombre}</b></td><td>{r.estudio}</td><td>{r.clinica||'-'}</td><td>{inferirDoctor(r,clinicas)}</td><td className="money">{dinero(precioRegistro(r))}</td><td>{r.estadoPago}</td><td><div className="row"><button className="btn light small" onClick={()=>editar(r)}>Editar</button><button className="btn danger small" onClick={()=>borrar(r.id)}>Eliminar</button></div></td></tr>):<tr><td colSpan={8} className="empty">No hay pacientes en este filtro.</td></tr>}</tbody></table></div></div></>}
-{seccion==='cortes'&&<><h1 className="title">Cortes semanales</h1><p className="sub">Selecciona cualquier semana y descarga el corte completo en imagen PNG para enviarlo al dueño.</p><div className="card"><div className="reportTop"><div className="field"><label>Semana</label><select value={semanaCorte} onChange={e=>setSemanaCorte(e.target.value)}>{semanasDisponibles.map(s=><option key={s} value={s}>{etiquetaSemana(s)}</option>)}</select></div><button className="btn primary" onClick={pngCorte}>⬇ Descargar corte en imagen PNG</button></div></div><div className="grid"><div className="kpi accent"><b>Pacientes</b><strong>{resCorte.pacientes}</strong></div><div className="kpi accent"><b>Ingresos</b><strong>{dinero(resCorte.ingresos)}</strong></div><div className="kpi"><b>Cobrado</b><strong>{dinero(resCorte.cobrado)}</strong></div><div className="kpi"><b>Pendiente</b><strong>{dinero(resCorte.pendiente)}</strong></div></div><div className="card"><h2>Pacientes · {etiquetaSemana(semanaCorte)}</h2><div className="table"><table><thead><tr><th>Fecha</th><th>Paciente</th><th>Estudio</th><th>Clínica</th><th>Dentista</th><th>Precio</th><th>Estado</th></tr></thead><tbody>{regsCorte.length?regsCorte.map(r=><tr key={r.id}><td>{r.fecha}</td><td>{r.nombre}</td><td>{r.estudio}</td><td>{r.clinica}</td><td>{inferirDoctor(r,clinicas)}</td><td>{dinero(precioRegistro(r))}</td><td>{r.estadoPago}</td></tr>):<tr><td colSpan={7} className="empty">Sin registros para esta semana.</td></tr>}</tbody></table></div></div></>}
-{seccion==='comisiones'&&<><h1 className="title">Comisiones mensuales</h1><p className="sub">Descarga imágenes del resumen mensual, por clínica o por dentista.</p><div className="card"><div className="reportTop"><div className="field"><label>Mes</label><select value={mesCom} onChange={e=>setMesCom(e.target.value)}>{mesesDisponibles.map(m=><option key={m} value={m}>{nombreMes(m)}</option>)}</select></div><div className="row"><button className="btn primary" onClick={pngResumenClinicas}>PNG resumen clínicas</button><button className="btn primary" onClick={pngResumenDoctores}>PNG resumen dentistas</button></div></div></div><div className="grid"><div className="kpi accent"><b>Pacientes del mes</b><strong>{regsCom.length}</strong></div><div className="kpi accent"><b>Comisiones totales</b><strong>{dinero(totalComMes)}</strong></div></div><div className="two"><div className="card"><h2>Por clínica</h2><div className="table"><table style={{minWidth:650}}><thead><tr><th>Clínica</th><th>Pac.</th><th>Total</th><th>Imagen</th></tr></thead><tbody>{comClinicas.length?comClinicas.map(c=><tr key={c.nombre}><td><b>{c.nombre}</b></td><td>{c.pacientes}</td><td className="money">{dinero(c.total)}</td><td><button className="btn light small" onClick={()=>pngClinica(c)}>Descargar PNG</button></td></tr>):<tr><td colSpan={4} className="empty">Sin comisiones.</td></tr>}</tbody></table></div></div><div className="card"><h2>Por dentista</h2><div className="table"><table style={{minWidth:650}}><thead><tr><th>Dentista</th><th>Pac.</th><th>Total</th><th>Imagen</th></tr></thead><tbody>{comDoctores.length?comDoctores.map(d=><tr key={d.nombre}><td><b>{d.nombre}</b></td><td>{d.pacientes}</td><td className="money">{dinero(d.total)}</td><td><button className="btn light small" onClick={()=>pngDoctor(d)}>Descargar PNG</button></td></tr>):<tr><td colSpan={4} className="empty">Sin comisiones.</td></tr>}</tbody></table></div></div></div></>}
-{seccion==='clinicas'&&<><h1 className="title">Clínicas y doctores</h1><p className="sub">Puedes agregar, renombrar o quitar clínicas y dentistas. Al renombrar una clínica, el historial se actualiza.</p><div className="two"><div className="card"><h2>Agregar clínica</h2><div className="row"><div className="field" style={{flex:1}}><label>Nombre</label><input value={nuevaClinica} onChange={e=>setNuevaClinica(e.target.value)} placeholder="Nueva clínica"/></div><button className="btn primary" onClick={agregarClinica}>Agregar</button></div></div><div className="card"><h2>Modificar clínica</h2><div className="field"><label>Clínica</label><select value={clinicaAdmin} onChange={e=>seleccionarClinicaAdmin(e.target.value)}><option value="">Seleccionar</option>{clinicas.map(c=><option key={c.id||c.nombre} value={c.nombre}>{c.nombre}</option>)}</select></div>{clinicaAdmin&&<><div className="field" style={{marginTop:12}}><label>Nuevo nombre</label><input value={nombreClinicaEdit} onChange={e=>setNombreClinicaEdit(e.target.value)}/></div><div className="buttons"><button className="btn primary" onClick={renombrarClinica}>Guardar nombre</button><button className="btn danger" onClick={eliminarClinica}>Quitar del catálogo</button></div></>}</div></div>{clinicaAdmin&&<div className="card"><h2>Dentistas de {clinicaAdmin}</h2><div className="two"><div className="adminBox"><h3>Agregar dentista</h3><div className="row"><input value={nuevoDoctor} onChange={e=>setNuevoDoctor(e.target.value)} placeholder="Nombre del dentista"/><button className="btn primary" onClick={agregarDoctor}>Agregar</button></div></div><div className="adminBox"><h3>Modificar dentista</h3><div className="field"><label>Dentista</label><select value={doctorAdmin} onChange={e=>seleccionarDoctorAdmin(e.target.value)}><option value="">Seleccionar</option>{(clinicas.find(c=>c.nombre===clinicaAdmin)?.doctores||[]).map(d=><option key={d}>{d}</option>)}</select></div>{doctorAdmin&&<><div className="field" style={{marginTop:10}}><label>Nuevo nombre</label><input value={nombreDoctorEdit} onChange={e=>setNombreDoctorEdit(e.target.value)}/></div><div className="buttons"><button className="btn primary" onClick={renombrarDoctor}>Guardar nombre</button><button className="btn danger" onClick={eliminarDoctor}>Quitar</button></div></>}</div></div></div>}</>}
-{seccion==='respaldo'&&<><h1 className="title">Respaldo</h1><p className="sub">Guarda una copia antes de cambiar de computadora o navegador.</p><div className="card"><div className="notice">Tus registros siguen guardándose con la clave original <b>imadent_registros</b>, por lo que esta actualización conserva el historial del navegador.</div><div className="buttons"><button className="btn primary" onClick={exportarRespaldo}>Descargar respaldo JSON</button><button className="btn light" onClick={()=>importRef.current?.click()}>Restaurar respaldo</button><input ref={importRef} type="file" accept="application/json" style={{display:'none'}} onChange={e=>importarRespaldo(e.target.files?.[0])}/></div></div><div className="card"><h2>Historial por mes</h2><div className="field" style={{maxWidth:320}}><label>Mes</label><select value={mesHist} onChange={e=>setMesHist(e.target.value)}>{mesesDisponibles.map(m=><option key={m} value={m}>{nombreMes(m)}</option>)}</select></div><div className="table" style={{marginTop:14}}><table><thead><tr><th>Fecha</th><th>Paciente</th><th>Estudio</th><th>Clínica</th><th>Dentista</th><th>Precio</th></tr></thead><tbody>{regsHist.map(r=><tr key={r.id}><td>{r.fecha}</td><td>{r.nombre}</td><td>{r.estudio}</td><td>{r.clinica}</td><td>{inferirDoctor(r,clinicas)}</td><td>{dinero(precioRegistro(r))}</td></tr>)}</tbody></table></div></div></>}
-</main></div>}
+  const [seccion,setSeccion] = useState('dashboard');
+  const [registros,setRegistros] = useState(()=>{
+    try{return JSON.parse(localStorage.getItem('imadent_registros')||'[]')}catch{return[]}
+  });
+  const [clinicas,setClinicas] = useState(()=>{
+    try{return JSON.parse(localStorage.getItem('imadent_catalogo_clinicas')||'null')||CLINICAS_BASE}catch{return CLINICAS_BASE}
+  });
+  const [form,setForm] = useState({...FORM_BASE,fecha:hoy()});
+  const [editId,setEditId] = useState(null);
+  const [busqueda,setBusqueda] = useState('');
+  const [filtro,setFiltro] = useState('semana');
+  const [vistaDash,setVistaDash] = useState('semana');
+  const [mesHist,setMesHist] = useState(mesActual());
+  const [semanaCorte,setSemanaCorte] = useState(lunesDeFecha(hoy()));
+  const [mesCom,setMesCom] = useState(mesActual());
+
+  const [nuevaClinica,setNuevaClinica] = useState('');
+  const [clinicaAdmin,setClinicaAdmin] = useState('');
+  const [nombreClinicaEdit,setNombreClinicaEdit] = useState('');
+  const [nuevoDoctor,setNuevoDoctor] = useState('');
+  const [doctorAdmin,setDoctorAdmin] = useState('');
+  const [nombreDoctorEdit,setNombreDoctorEdit] = useState('');
+  const importRef = useRef(null);
+
+  useEffect(()=>localStorage.setItem('imadent_registros',JSON.stringify(registros)),[registros]);
+  useEffect(()=>localStorage.setItem('imadent_catalogo_clinicas',JSON.stringify(clinicas)),[clinicas]);
+
+  const clinicaForm = useMemo(()=>clinicas.find(c=>c.nombre===form.clinica),[clinicas,form.clinica]);
+  const doctoresForm = clinicaForm?.doctores || [];
+  const semanaActual = lunesDeFecha(hoy());
+
+  const regsSemana = useMemo(()=>registros.filter(r=>r.fecha && lunesDeFecha(r.fecha)===semanaActual),[registros,semanaActual]);
+  const regsMes = useMemo(()=>registros.filter(r=>(r.fecha||'').slice(0,7)===mesActual()),[registros]);
+  const resSemana = useMemo(()=>resumen(regsSemana),[regsSemana]);
+  const resMes = useMemo(()=>resumen(regsMes),[regsMes]);
+
+  const semanasDisponibles = useMemo(()=>{
+    const set=new Set([semanaActual]);
+    registros.forEach(r=>r.fecha&&set.add(lunesDeFecha(r.fecha)));
+    return [...set].filter(Boolean).sort().reverse();
+  },[registros,semanaActual]);
+
+  const mesesDisponibles = useMemo(()=>{
+    const set=new Set([mesActual()]);
+    registros.forEach(r=>r.fecha&&set.add((r.fecha||'').slice(0,7)));
+    return [...set].filter(Boolean).sort().reverse();
+  },[registros]);
+
+  const registrosLista = useMemo(()=>{
+    let list=[...registros];
+    if(filtro==='hoy') list=list.filter(r=>r.fecha===hoy());
+    if(filtro==='semana') list=list.filter(r=>r.fecha&&lunesDeFecha(r.fecha)===semanaActual);
+    if(filtro==='mes') list=list.filter(r=>(r.fecha||'').slice(0,7)===mesActual());
+    if(filtro==='pendiente') list=list.filter(r=>r.estadoPago!=='Pagado');
+    if(filtro==='sincomision') list=list.filter(r=>!generaComisionRegistro(r));
+    if(busqueda.trim()){
+      const q=normalizar(busqueda);
+      list=list.filter(r=>[r.nombre,r.clinica,inferirDoctor(r,clinicas),r.estudio,r.folio].some(v=>normalizar(v||'').includes(q)));
+    }
+    return list.sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||'')||Number(b.id||0)-Number(a.id||0));
+  },[registros,filtro,busqueda,clinicas,semanaActual]);
+
+  const regsHist = useMemo(()=>registros.filter(r=>(r.fecha||'').slice(0,7)===mesHist).sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||'')),[registros,mesHist]);
+  const resHist = useMemo(()=>resumen(regsHist),[regsHist]);
+
+  const regsCorte = useMemo(()=>registros.filter(r=>r.fecha&&lunesDeFecha(r.fecha)===semanaCorte).sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||'')),[registros,semanaCorte]);
+  const resCorte = useMemo(()=>resumen(regsCorte),[regsCorte]);
+
+  const regsCom = useMemo(()=>registros.filter(r=>(r.fecha||'').slice(0,7)===mesCom && comisionRegistro(r)>0),[registros,mesCom]);
+  const totalComMes = useMemo(()=>regsCom.reduce((s,r)=>s+comisionRegistro(r),0),[regsCom]);
+
+  const comClinicas = useMemo(()=>{
+    const map={};
+    for(const r of regsCom){
+      const n=r.clinica||'SIN CLÍNICA';
+      if(!map[n]) map[n]={nombre:n,pacientes:0,digital:0,impresa:0,total:0};
+      map[n].pacientes++;
+      const c=comisionRegistro(r); map[n].total+=c;
+      if(r.tipoEntrega==='Impresa') map[n].impresa+=c; else map[n].digital+=c;
+    }
+    return Object.values(map).sort((a,b)=>a.nombre.localeCompare(b.nombre));
+  },[regsCom]);
+
+  const comDoctores = useMemo(()=>{
+    const map={};
+    for(const r of regsCom){
+      const n=inferirDoctor(r,clinicas);
+      if(!map[n]) map[n]={nombre:n,pacientes:0,total:0,clinicas:{}};
+      map[n].pacientes++; map[n].total+=comisionRegistro(r);
+      const c=r.clinica||'SIN CLÍNICA';
+      map[n].clinicas[c]=(map[n].clinicas[c]||0)+comisionRegistro(r);
+    }
+    return Object.values(map).sort((a,b)=>a.nombre.localeCompare(b.nombre));
+  },[regsCom,clinicas]);
+
+  function setCampo(k,v){setForm(f=>({...f,[k]:v}))}
+  function limpiar(){setForm({...FORM_BASE,fecha:hoy()});setEditId(null)}
+
+  function guardar(){
+    const fecha = form.fecha || hoy();
+    const nombre = form.nombre.trim() || 'SIN NOMBRE';
+    const genera = form.generaComision !== false;
+    const base = {
+      fecha,
+      nombre,
+      telefono:form.telefono.trim(),
+      estudio:form.estudio || 'Panorámica',
+      tipoPago:form.tipoPago || 'Efectivo',
+      estadoPago:form.estadoPago || 'Pagado',
+      clinica:form.clinica || '',
+      doctor:form.doctor || '',
+      tipoEntrega:form.tipoEntrega || 'Digital',
+      generaComision:genera,
+      observaciones:form.observaciones.trim(),
+      precio:PRECIOS[form.estudio] || 0,
+      comision:genera ? (COMISIONES[form.tipoEntrega] || 0) : 0,
+    };
+    if(editId!==null){
+      setRegistros(rs=>rs.map(r=>r.id===editId?{...r,...base}:r));
+    }else{
+      setRegistros(rs=>[{...base,id:Date.now(),folio:`IMA-${Date.now()}`},...rs]);
+    }
+    limpiar(); setSeccion('pacientes');
+  }
+
+  function editar(r){
+    const d=inferirDoctor(r,clinicas);
+    setEditId(r.id);
+    setForm({
+      fecha:r.fecha||hoy(),
+      nombre:r.nombre||'',
+      telefono:r.telefono||'',
+      estudio:r.estudio||'Panorámica',
+      tipoPago:r.tipoPago||'Efectivo',
+      estadoPago:r.estadoPago||'Pagado',
+      clinica:r.clinica||'',
+      doctor:d==='SIN DOCTOR'?'':d,
+      tipoEntrega:r.tipoEntrega||'Digital',
+      generaComision:generaComisionRegistro(r),
+      observaciones:r.observaciones||'',
+    });
+    setSeccion('pacientes');
+    setTimeout(()=>window.scrollTo({top:0,behavior:'smooth'}),60);
+  }
+  function borrar(id){if(confirm('¿Eliminar este paciente?'))setRegistros(rs=>rs.filter(r=>r.id!==id))}
+
+  function agregarClinica(){
+    const n=nuevaClinica.trim(); if(!n) return;
+    if(clinicas.some(c=>normalizar(c.nombre)===normalizar(n))){alert('La clínica ya existe.');return}
+    setClinicas(cs=>[...cs,{id:`${slug(n)}-${Date.now()}`,nombre:n,doctores:[]}]); setNuevaClinica('');
+  }
+  function seleccionarClinicaAdmin(nombre){
+    setClinicaAdmin(nombre);setNombreClinicaEdit(nombre);setDoctorAdmin('');setNombreDoctorEdit('');
+  }
+  function renombrarClinica(){
+    const nuevo=nombreClinicaEdit.trim(); if(!clinicaAdmin||!nuevo) return;
+    if(clinicas.some(c=>c.nombre!==clinicaAdmin&&normalizar(c.nombre)===normalizar(nuevo))){alert('Ya existe otra clínica con ese nombre.');return}
+    const anterior=clinicaAdmin;
+    setClinicas(cs=>cs.map(c=>c.nombre===anterior?{...c,nombre:nuevo}:c));
+    setRegistros(rs=>rs.map(r=>r.clinica===anterior?{...r,clinica:nuevo}:r));
+    if(form.clinica===anterior)setCampo('clinica',nuevo);
+    setClinicaAdmin(nuevo);setNombreClinicaEdit(nuevo);
+  }
+  function eliminarClinica(){
+    if(!clinicaAdmin)return;
+    if(!confirm(`¿Quitar "${clinicaAdmin}" del catálogo? Los registros históricos no se borran.`))return;
+    setClinicas(cs=>cs.filter(c=>c.nombre!==clinicaAdmin));
+    setClinicaAdmin('');setNombreClinicaEdit('');setDoctorAdmin('');setNombreDoctorEdit('');
+  }
+  function agregarDoctor(){
+    const n=nuevoDoctor.trim(); if(!clinicaAdmin||!n)return;
+    setClinicas(cs=>cs.map(c=>{
+      if(c.nombre!==clinicaAdmin)return c;
+      if((c.doctores||[]).some(d=>normalizar(d)===normalizar(n))){alert('Ese doctor ya existe.');return c}
+      return {...c,doctores:[...(c.doctores||[]),n]};
+    }));
+    setNuevoDoctor('');
+  }
+  function seleccionarDoctorAdmin(nombre){setDoctorAdmin(nombre);setNombreDoctorEdit(nombre)}
+  function renombrarDoctor(){
+    const nuevo=nombreDoctorEdit.trim(); if(!clinicaAdmin||!doctorAdmin||!nuevo)return;
+    const anterior=doctorAdmin;
+    setClinicas(cs=>cs.map(c=>c.nombre===clinicaAdmin?{...c,doctores:(c.doctores||[]).map(d=>d===anterior?nuevo:d)}:c));
+    setRegistros(rs=>rs.map(r=>r.clinica===clinicaAdmin&&r.doctor===anterior?{...r,doctor:nuevo}:r));
+    if(form.clinica===clinicaAdmin&&form.doctor===anterior)setCampo('doctor',nuevo);
+    setDoctorAdmin(nuevo);setNombreDoctorEdit(nuevo);
+  }
+  function eliminarDoctor(){
+    if(!clinicaAdmin||!doctorAdmin)return;
+    if(!confirm(`¿Quitar "${doctorAdmin}" del catálogo? Los pacientes históricos no se borran.`))return;
+    setClinicas(cs=>cs.map(c=>c.nombre===clinicaAdmin?{...c,doctores:(c.doctores||[]).filter(d=>d!==doctorAdmin)}:c));
+    setDoctorAdmin('');setNombreDoctorEdit('');
+  }
+
+  function descargarCorte(){
+    descargarReportePNG({
+      titulo:'Corte semanal',
+      subtitulo:etiquetaSemana(semanaCorte),
+      resumenLineas:[
+        `Pacientes: ${resCorte.pacientes}`,
+        `Ingresos: ${dinero(resCorte.ingresos)}   •   Cobrado: ${dinero(resCorte.cobrado)}   •   Pendiente: ${dinero(resCorte.pendiente)}`,
+        `Comisiones: ${dinero(resCorte.comisiones)}   •   Sin comisión: ${resCorte.sinComision} pacientes`,
+        `Efectivo: ${dinero(resCorte.pagos.Efectivo)}   •   Transferencia: ${dinero(resCorte.pagos.Transferencia)}   •   Tarjeta: ${dinero(resCorte.pagos.Tarjeta)}`,
+      ],
+      columnas:[
+        {titulo:'Fecha',peso:.9,valor:r=>r.fecha||'-'},
+        {titulo:'Paciente',peso:1.5,valor:r=>r.nombre||'SIN NOMBRE'},
+        {titulo:'Estudio',peso:1.4,valor:r=>r.estudio||'-'},
+        {titulo:'Clínica',peso:1.3,valor:r=>r.clinica||'SIN CLÍNICA'},
+        {titulo:'Doctor',peso:1.4,valor:r=>inferirDoctor(r,clinicas)},
+        {titulo:'Precio',peso:.85,valor:r=>dinero(precioRegistro(r))},
+        {titulo:'Comisión',peso:.85,valor:r=>dinero(comisionRegistro(r))},
+      ],
+      filas:regsCorte,
+      archivo:`corte-semana-${semanaCorte}.png`,
+    });
+  }
+
+  function descargarResumenClinicas(){
+    descargarReportePNG({
+      titulo:'Comisiones por clínica',
+      subtitulo:nombreMes(mesCom),
+      resumenLineas:[`Total de comisiones del mes: ${dinero(totalComMes)}`,`Pacientes con comisión: ${regsCom.length}`],
+      columnas:[
+        {titulo:'Clínica',peso:2,clave:'nombre'},
+        {titulo:'Pacientes',peso:1,clave:'pacientes'},
+        {titulo:'Digital',peso:1,valor:r=>dinero(r.digital)},
+        {titulo:'Impresa',peso:1,valor:r=>dinero(r.impresa)},
+        {titulo:'Total',peso:1,valor:r=>dinero(r.total)},
+      ],
+      filas:comClinicas,
+      archivo:`comisiones-clinicas-${mesCom}.png`,
+    });
+  }
+
+  function descargarClinica(nombre){
+    const lista=regsCom.filter(r=>(r.clinica||'SIN CLÍNICA')===nombre);
+    const total=lista.reduce((s,r)=>s+comisionRegistro(r),0);
+    descargarReportePNG({
+      titulo:`Comisiones · ${nombre}`,
+      subtitulo:nombreMes(mesCom),
+      resumenLineas:[`Pacientes con comisión: ${lista.length}`,`Total: ${dinero(total)}`],
+      columnas:[
+        {titulo:'Fecha',peso:1,valor:r=>r.fecha||'-'},
+        {titulo:'Paciente',peso:1.7,valor:r=>r.nombre||'SIN NOMBRE'},
+        {titulo:'Doctor',peso:1.6,valor:r=>inferirDoctor(r,clinicas)},
+        {titulo:'Entrega',peso:1,valor:r=>r.tipoEntrega||'-'},
+        {titulo:'Comisión',peso:1,valor:r=>dinero(comisionRegistro(r))},
+      ],
+      filas:lista,
+      archivo:`comision-${nombreSeguro(nombre)}-${mesCom}.png`,
+    });
+  }
+
+  function descargarResumenDoctores(){
+    descargarReportePNG({
+      titulo:'Comisiones por dentista',
+      subtitulo:nombreMes(mesCom),
+      resumenLineas:[`Total de comisiones del mes: ${dinero(totalComMes)}`,`Pacientes con comisión: ${regsCom.length}`],
+      columnas:[
+        {titulo:'Dentista',peso:2,clave:'nombre'},
+        {titulo:'Pacientes',peso:1,clave:'pacientes'},
+        {titulo:'Total',peso:1,valor:r=>dinero(r.total)},
+      ],
+      filas:comDoctores,
+      archivo:`comisiones-dentistas-${mesCom}.png`,
+    });
+  }
+
+  function descargarDoctor(nombre){
+    const lista=regsCom.filter(r=>inferirDoctor(r,clinicas)===nombre);
+    const total=lista.reduce((s,r)=>s+comisionRegistro(r),0);
+    descargarReportePNG({
+      titulo:`Comisión · ${nombre}`,
+      subtitulo:nombreMes(mesCom),
+      resumenLineas:[`Pacientes con comisión: ${lista.length}`,`Total: ${dinero(total)}`],
+      columnas:[
+        {titulo:'Fecha',peso:1,valor:r=>r.fecha||'-'},
+        {titulo:'Paciente',peso:1.7,valor:r=>r.nombre||'SIN NOMBRE'},
+        {titulo:'Clínica',peso:1.5,valor:r=>r.clinica||'SIN CLÍNICA'},
+        {titulo:'Entrega',peso:1,valor:r=>r.tipoEntrega||'-'},
+        {titulo:'Comisión',peso:1,valor:r=>dinero(comisionRegistro(r))},
+      ],
+      filas:lista,
+      archivo:`comision-${nombreSeguro(nombre)}-${mesCom}.png`,
+    });
+  }
+
+  function exportarRespaldo(){
+    descargarTexto(`respaldo-imadent-${hoy()}.json`,JSON.stringify({version:7,fecha:hoy(),registros,clinicas},null,2));
+  }
+  function importarRespaldo(e){
+    const file=e.target.files?.[0];if(!file)return;
+    const reader=new FileReader();
+    reader.onload=()=>{
+      try{
+        const data=JSON.parse(String(reader.result||''));
+        if(Array.isArray(data.registros))setRegistros(data.registros);
+        if(Array.isArray(data.clinicas))setClinicas(data.clinicas);
+        alert('Respaldo restaurado.');
+      }catch{alert('El archivo no es un respaldo válido.')}
+      e.target.value='';
+    };
+    reader.readAsText(file);
+  }
+
+  const css=`
+  *{box-sizing:border-box}
+  :root{font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#17313a;background:#eef3f5;color-scheme:light}
+  body{margin:0;background:#eef3f5}
+  button,input,select,textarea{font:inherit}
+  input,select,textarea{width:100%;border:1px solid #cddce1;border-radius:12px;padding:12px 13px;background:#fff!important;color:#142f38!important;-webkit-text-fill-color:#142f38!important;caret-color:#087d87;outline:none}
+  input::placeholder,textarea::placeholder{color:#8a9ca3!important;-webkit-text-fill-color:#8a9ca3!important;opacity:1}
+  input:focus,select:focus,textarea:focus{border-color:#0b8791;box-shadow:0 0 0 3px rgba(11,135,145,.12)}
+  label{display:block;font-size:12px;font-weight:800;color:#5a7078;margin:0 0 6px;text-transform:uppercase;letter-spacing:.03em}
+  .app{max-width:1240px;margin:0 auto;min-height:100vh;background:#f8fbfc;box-shadow:0 0 30px rgba(30,60,70,.08)}
+  .top{background:linear-gradient(135deg,#062f38,#0a5962);color:#fff;padding:25px 28px;display:flex;align-items:center;justify-content:space-between;gap:20px}
+  .brand{font-size:30px;font-weight:900;letter-spacing:.08em}.brand small{display:block;font-size:12px;letter-spacing:0;font-weight:600;color:#c8e4e8;margin-top:5px}
+  .date{background:rgba(255,255,255,.12);padding:10px 14px;border-radius:12px;font-weight:750}
+  .nav{display:flex;gap:8px;flex-wrap:wrap;padding:15px 20px;background:#fff;border-bottom:1px solid #dce7ea;position:sticky;top:0;z-index:3}
+  .nav button,.tab{border:1px solid #d8e4e8;background:#fff;color:#405861;padding:10px 13px;border-radius:11px;font-weight:800;cursor:pointer}
+  .nav button.active,.tab.active{background:#087d87;color:#fff;border-color:#087d87}
+  .main{padding:24px}.title{font-size:26px;font-weight:900;margin:0 0 5px}.sub{color:#698088;margin:0 0 20px}
+  .card{background:#fff;border:1px solid #dce7ea;border-radius:17px;padding:18px;box-shadow:0 7px 20px rgba(34,73,84,.04);margin-bottom:18px}
+  .card-title{font-size:17px;font-weight:900;margin-bottom:14px}
+  .grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+  .span2{grid-column:span 2}.span3{grid-column:span 3}
+  .kpis{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px;margin-bottom:18px}
+  .kpi{background:#fff;border:1px solid #dce7ea;border-radius:15px;padding:16px}.kpi.accent{border-top:4px solid #0a8993}.kpi b{display:block;font-size:25px;margin-top:6px}.kpi span{font-size:11px;font-weight:900;color:#74878e;text-transform:uppercase}
+  .btns{display:flex;gap:9px;flex-wrap:wrap}.btn{border:0;border-radius:11px;padding:11px 14px;font-weight:850;cursor:pointer}.primary{background:#087d87;color:#fff}.light{background:#eef5f6;color:#264850;border:1px solid #d4e4e7}.danger{background:#fff0f0;color:#a1333d;border:1px solid #f1c9cd}.success{background:#e8f7ef;color:#176640;border:1px solid #c7ead8}
+  .seg{display:flex;gap:8px;flex-wrap:wrap}.seg button{border:1px solid #cfdfe3;background:#fff;color:#405861;padding:10px 13px;border-radius:10px;font-weight:800;cursor:pointer}.seg button.on{background:#087d87;color:#fff;border-color:#087d87}
+  .notice{background:#eef8f8;border:1px solid #cde7e9;color:#315960;padding:11px 13px;border-radius:11px;font-size:13px}
+  .table-wrap{overflow:auto;border:1px solid #dbe7ea;border-radius:13px}table{width:100%;border-collapse:collapse;min-width:850px}th{background:#edf5f6;color:#47616a;font-size:11px;text-transform:uppercase;letter-spacing:.04em;text-align:left;padding:11px}td{padding:11px;border-top:1px solid #e4edef;font-size:13px;vertical-align:middle}tr:nth-child(even) td{background:#fbfdfd}
+  .badge{display:inline-flex;padding:5px 8px;border-radius:999px;font-size:11px;font-weight:900}.yes{background:#e4f7ed;color:#176640}.no{background:#f4f0f0;color:#77565a}.pending{background:#fff5dc;color:#8b650e}
+  .row-actions{display:flex;gap:6px}.row-actions button{padding:7px 9px;border-radius:8px;border:1px solid #d6e3e7;background:#fff;cursor:pointer;font-weight:750}
+  .admin-list{display:flex;gap:8px;flex-wrap:wrap}.chip{border:1px solid #d5e3e6;background:#f8fbfc;padding:9px 11px;border-radius:10px;cursor:pointer;font-weight:750}.chip.active{background:#087d87;color:#fff}
+  @media(max-width:900px){.grid,.grid2{grid-template-columns:1fr}.span2,.span3{grid-column:auto}.kpis{grid-template-columns:repeat(2,1fr)}.main{padding:15px}.top{padding:20px}.nav{position:static}}
+  `;
+
+  const PatientTable=({lista,acciones=true})=>(
+    <div className="table-wrap"><table><thead><tr>
+      <th>Fecha</th><th>Paciente</th><th>Estudio</th><th>Clínica</th><th>Doctor</th><th>Precio</th><th>Pago</th><th>Comisión</th>{acciones&&<th>Acciones</th>}
+    </tr></thead><tbody>
+      {!lista.length?<tr><td colSpan={acciones?9:8} style={{textAlign:'center',color:'#7b8d93',padding:24}}>Sin registros</td></tr>:
+      lista.map(r=><tr key={r.id}>
+        <td>{r.fecha||'-'}</td><td><b>{r.nombre||'SIN NOMBRE'}</b></td><td>{r.estudio||'-'}</td><td>{r.clinica||'SIN CLÍNICA'}</td><td>{inferirDoctor(r,clinicas)}</td><td>{dinero(precioRegistro(r))}</td>
+        <td>{r.estadoPago||'-'}</td>
+        <td><span className={`badge ${generaComisionRegistro(r)?'yes':'no'}`}>{generaComisionRegistro(r)?dinero(comisionRegistro(r)):'NO'}</span></td>
+        {acciones&&<td><div className="row-actions"><button onClick={()=>editar(r)}>Editar</button><button onClick={()=>borrar(r.id)}>Eliminar</button></div></td>}
+      </tr>)}
+    </tbody></table></div>
+  );
+
+  const Summary=({r})=><div className="kpis">
+    <div className="kpi accent"><span>Pacientes</span><b>{r.pacientes}</b></div>
+    <div className="kpi accent"><span>Ingresos</span><b>{dinero(r.ingresos)}</b></div>
+    <div className="kpi accent"><span>Comisiones</span><b>{dinero(r.comisiones)}</b></div>
+    <div className="kpi"><span>Cobrado</span><b>{dinero(r.cobrado)}</b></div>
+    <div className="kpi"><span>Pendiente</span><b>{dinero(r.pendiente)}</b></div>
+  </div>;
+
+  return <><style>{css}</style><div className="app">
+    <header className="top"><div className="brand">IMA DENT<small>Centro Radiológico Dental · Sistema administrativo</small></div><div className="date">{new Date().toLocaleDateString('es-MX',{day:'numeric',month:'long',year:'numeric'})}</div></header>
+    <nav className="nav">
+      {[["dashboard","📊 Panel"],["pacientes","👤 Pacientes"],["cortes","📷 Cortes"],["comisiones","💰 Comisiones"],["catalogo","⚙ Clínicas y doctores"],["respaldo","💾 Respaldo"]].map(([k,l])=><button key={k} className={seccion===k?'active':''} onClick={()=>setSeccion(k)}>{l}</button>)}
+    </nav>
+
+    <main className="main">
+      {seccion==='dashboard'&&<>
+        <h1 className="title">Panel de control</h1><p className="sub">Consulta rápidamente la semana, el mes o un historial mensual.</p>
+        <div className="seg" style={{marginBottom:18}}>
+          {['semana','mes','historial'].map(v=><button key={v} className={vistaDash===v?'on':''} onClick={()=>setVistaDash(v)}>{v==='semana'?'Esta semana':v==='mes'?'Este mes':'Historial del mes'}</button>)}
+        </div>
+        {vistaDash==='semana'&&<><div className="notice" style={{marginBottom:14}}>Semana: {etiquetaSemana(semanaActual)}</div><Summary r={resSemana}/><div className="card"><div className="card-title">Pacientes de esta semana</div><PatientTable lista={regsSemana} acciones={false}/></div></>}
+        {vistaDash==='mes'&&<><div className="notice" style={{marginBottom:14}}>{nombreMes(mesActual())}</div><Summary r={resMes}/><div className="card"><div className="card-title">Pacientes del mes actual</div><PatientTable lista={regsMes} acciones={false}/></div></>}
+        {vistaDash==='historial'&&<><div className="card"><div style={{maxWidth:360}}><label>Mes</label><select value={mesHist} onChange={e=>setMesHist(e.target.value)}>{mesesDisponibles.map(m=><option key={m} value={m}>{nombreMes(m)}</option>)}</select></div></div><Summary r={resHist}/><div className="card"><div className="card-title">Historial de {nombreMes(mesHist)}</div><PatientTable lista={regsHist} acciones={false}/></div></>}
+      </>}
+
+      {seccion==='pacientes'&&<>
+        <h1 className="title">{editId!==null?'Modificar paciente':'Registrar paciente'}</h1>
+        <p className="sub">Puedes guardar aunque dejes campos vacíos. El correo fue eliminado del sistema.</p>
+        <div className="card">
+          <div className="grid">
+            <div><label>Fecha</label><input type="date" value={form.fecha} onChange={e=>setCampo('fecha',e.target.value)}/></div>
+            <div><label>Nombre del paciente</label><input value={form.nombre} placeholder="Opcional" onChange={e=>setCampo('nombre',e.target.value)}/></div>
+            <div><label>Teléfono</label><input value={form.telefono} placeholder="Opcional" onChange={e=>setCampo('telefono',e.target.value)}/></div>
+
+            <div><label>Estudio</label><select value={form.estudio} onChange={e=>setCampo('estudio',e.target.value)}>{Object.keys(PRECIOS).map(x=><option key={x}>{x}</option>)}</select></div>
+            <div><label>Precio</label><input value={dinero(PRECIOS[form.estudio]||0)} readOnly/></div>
+            <div><label>Forma de pago</label><select value={form.tipoPago} onChange={e=>setCampo('tipoPago',e.target.value)}>{['Efectivo','Transferencia','Tarjeta','Otro'].map(x=><option key={x}>{x}</option>)}</select></div>
+
+            <div><label>Estado de pago</label><select value={form.estadoPago} onChange={e=>setCampo('estadoPago',e.target.value)}><option>Pagado</option><option>Pendiente</option></select></div>
+            <div><label>Clínica</label><select value={form.clinica} onChange={e=>{setCampo('clinica',e.target.value);setCampo('doctor','')}}><option value="">Sin clínica / externa</option>{clinicas.map(c=><option key={c.id||c.nombre} value={c.nombre}>{c.nombre}</option>)}</select></div>
+            <div><label>Doctor</label><select value={form.doctor} onChange={e=>setCampo('doctor',e.target.value)}><option value="">Sin doctor</option>{doctoresForm.map(d=><option key={d} value={d}>{d}</option>)}</select></div>
+
+            <div><label>Entrega</label><select value={form.tipoEntrega} onChange={e=>setCampo('tipoEntrega',e.target.value)}><option>Digital</option><option>Impresa</option></select></div>
+            <div className="span2"><label>¿Genera comisión?</label><div className="seg"><button type="button" className={form.generaComision?'on':''} onClick={()=>setCampo('generaComision',true)}>Sí, dar comisión · {dinero(COMISIONES[form.tipoEntrega]||0)}</button><button type="button" className={!form.generaComision?'on':''} onClick={()=>setCampo('generaComision',false)}>No dar comisión</button></div></div>
+
+            <div className="span3"><label>Observaciones</label><textarea rows={3} value={form.observaciones} placeholder="Opcional" onChange={e=>setCampo('observaciones',e.target.value)}/></div>
+          </div>
+          <div className="notice" style={{marginTop:14}}>Para pacientes de clínicas externas puedes dejar clínica y doctor vacíos y marcar <b>No dar comisión</b>.</div>
+          <div className="btns" style={{marginTop:14}}><button className="btn primary" onClick={guardar}>{editId!==null?'Guardar cambios':'Guardar paciente'}</button>{editId!==null&&<button className="btn light" onClick={limpiar}>Cancelar edición</button>}</div>
+        </div>
+
+        <div className="card"><div className="card-title">Pacientes registrados</div>
+          <div className="seg" style={{marginBottom:12}}>
+            {[["hoy","Hoy"],["semana","Esta semana"],["mes","Este mes"],["pendiente","Pendientes"],["sincomision","Sin comisión"],["todos","Todos"]].map(([k,l])=><button key={k} className={filtro===k?'on':''} onClick={()=>setFiltro(k)}>{l}</button>)}
+          </div>
+          <div style={{maxWidth:430,marginBottom:12}}><input placeholder="Buscar paciente, clínica, doctor..." value={busqueda} onChange={e=>setBusqueda(e.target.value)}/></div>
+          <PatientTable lista={registrosLista}/>
+        </div>
+      </>}
+
+      {seccion==='cortes'&&<>
+        <h1 className="title">Cortes semanales</h1><p className="sub">Selecciona una semana y descarga el corte listo para enviar al dueño.</p>
+        <div className="card"><div className="grid2">
+          <div><label>Semana</label><select value={semanaCorte} onChange={e=>setSemanaCorte(e.target.value)}>{semanasDisponibles.map(s=><option key={s} value={s}>{etiquetaSemana(s)}</option>)}</select></div>
+          <div style={{display:'flex',alignItems:'end'}}><button className="btn primary" onClick={descargarCorte}>📷 Descargar corte en imagen PNG</button></div>
+        </div></div>
+        <Summary r={resCorte}/>
+        <div className="card"><div className="card-title">Pacientes · {etiquetaSemana(semanaCorte)}</div><PatientTable lista={regsCorte} acciones={false}/></div>
+      </>}
+
+      {seccion==='comisiones'&&<>
+        <h1 className="title">Comisiones mensuales</h1><p className="sub">Solo se incluyen pacientes marcados para dar comisión.</p>
+        <div className="card"><div className="grid2"><div><label>Mes</label><select value={mesCom} onChange={e=>setMesCom(e.target.value)}>{mesesDisponibles.map(m=><option key={m} value={m}>{nombreMes(m)}</option>)}</select></div><div className="notice">Total del mes: <b>{dinero(totalComMes)}</b> · {regsCom.length} pacientes con comisión</div></div></div>
+
+        <div className="card"><div className="card-title">Por clínica</div><div className="btns" style={{marginBottom:12}}><button className="btn primary" onClick={descargarResumenClinicas}>📷 Descargar todas las clínicas</button></div>
+          <div className="table-wrap"><table><thead><tr><th>Clínica</th><th>Pacientes</th><th>Digital</th><th>Impresa</th><th>Total</th><th>Imagen</th></tr></thead><tbody>
+            {!comClinicas.length?<tr><td colSpan={6}>Sin comisiones</td></tr>:comClinicas.map(r=><tr key={r.nombre}><td><b>{r.nombre}</b></td><td>{r.pacientes}</td><td>{dinero(r.digital)}</td><td>{dinero(r.impresa)}</td><td><b>{dinero(r.total)}</b></td><td><button className="btn light" onClick={()=>descargarClinica(r.nombre)}>Descargar PNG</button></td></tr>)}
+          </tbody></table></div>
+        </div>
+
+        <div className="card"><div className="card-title">Por dentista</div><div className="btns" style={{marginBottom:12}}><button className="btn primary" onClick={descargarResumenDoctores}>📷 Descargar todos los dentistas</button></div>
+          <div className="table-wrap"><table><thead><tr><th>Dentista</th><th>Pacientes</th><th>Total</th><th>Imagen</th></tr></thead><tbody>
+            {!comDoctores.length?<tr><td colSpan={4}>Sin comisiones</td></tr>:comDoctores.map(r=><tr key={r.nombre}><td><b>{r.nombre}</b></td><td>{r.pacientes}</td><td><b>{dinero(r.total)}</b></td><td><button className="btn light" onClick={()=>descargarDoctor(r.nombre)}>Descargar PNG</button></td></tr>)}
+          </tbody></table></div>
+        </div>
+      </>}
+
+      {seccion==='catalogo'&&<>
+        <h1 className="title">Clínicas y doctores</h1><p className="sub">Agrega o modifica nombres sin perder el historial.</p>
+        <div className="card"><div className="card-title">Agregar clínica</div><div className="grid2"><input value={nuevaClinica} placeholder="Nombre de la clínica" onChange={e=>setNuevaClinica(e.target.value)}/><button className="btn primary" onClick={agregarClinica}>Agregar clínica</button></div></div>
+        <div className="card"><div className="card-title">Seleccionar clínica</div><div className="admin-list">{clinicas.map(c=><button key={c.id||c.nombre} className={`chip ${clinicaAdmin===c.nombre?'active':''}`} onClick={()=>seleccionarClinicaAdmin(c.nombre)}>{c.nombre}</button>)}</div></div>
+
+        {clinicaAdmin&&<>
+          <div className="card"><div className="card-title">Modificar nombre de clínica</div><div className="grid2"><input value={nombreClinicaEdit} onChange={e=>setNombreClinicaEdit(e.target.value)}/><div className="btns"><button className="btn primary" onClick={renombrarClinica}>Guardar nombre</button><button className="btn danger" onClick={eliminarClinica}>Quitar del catálogo</button></div></div></div>
+          <div className="card"><div className="card-title">Doctores de {clinicaAdmin}</div><div className="grid2" style={{marginBottom:14}}><input value={nuevoDoctor} placeholder="Nombre del doctor" onChange={e=>setNuevoDoctor(e.target.value)}/><button className="btn primary" onClick={agregarDoctor}>Agregar doctor</button></div>
+            <div className="admin-list">{(clinicas.find(c=>c.nombre===clinicaAdmin)?.doctores||[]).map(d=><button key={d} className={`chip ${doctorAdmin===d?'active':''}`} onClick={()=>seleccionarDoctorAdmin(d)}>{d}</button>)}</div>
+            {doctorAdmin&&<div className="grid2" style={{marginTop:14}}><input value={nombreDoctorEdit} onChange={e=>setNombreDoctorEdit(e.target.value)}/><div className="btns"><button className="btn primary" onClick={renombrarDoctor}>Guardar nombre</button><button className="btn danger" onClick={eliminarDoctor}>Quitar doctor</button></div></div>}
+          </div>
+        </>}
+      </>}
+
+      {seccion==='respaldo'&&<>
+        <h1 className="title">Respaldo</h1><p className="sub">Tus datos continúan guardándose en este navegador. Descarga respaldos con frecuencia.</p>
+        <div className="card"><div className="btns"><button className="btn primary" onClick={exportarRespaldo}>Descargar respaldo JSON</button><button className="btn light" onClick={()=>importRef.current?.click()}>Restaurar respaldo</button><input ref={importRef} type="file" accept=".json,application/json" style={{display:'none'}} onChange={importarRespaldo}/></div></div>
+      </>}
+    </main>
+  </div></>;
+}
