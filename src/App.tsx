@@ -1,4 +1,4 @@
-// IMADENT PRO · interfaz profesional + gestión completa
+// IMADENT PRO v9 · comisiones por clínica/doctor + reporte diario PNG + interfaz ejecutiva
 // @ts-nocheck
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 
@@ -62,7 +62,21 @@ function comisionRegistro(r){
   if(r?.comision !== undefined && r?.comision !== null && r?.comision !== '') return Number(r.comision)||0;
   return Number(COMISIONES[r?.tipoEntrega]||0);
 }
-function doctorRegistro(r){ return (r?.doctor||'').trim() || SIN_DOCTOR; }
+function doctorRegistro(r,catalogo=CLINICAS_BASE){
+  const directo=(r?.doctor||'').trim();
+  if(directo) return directo;
+  const obs=normalizar(r?.observaciones||'');
+  if(obs){
+    for(const c of catalogo||[]){
+      for(const d of c.doctores||[]){
+        const completo=normalizar(d);
+        const corto=completo.replace('dra. ','').replace('dr. ','');
+        if(obs.includes(completo)||(corto&&obs.includes(corto))) return d;
+      }
+    }
+  }
+  return generaComisionRegistro(r)?'SIN DOCTOR ASIGNADO':SIN_DOCTOR;
+}
 function clinicaRegistro(r){ return (r?.clinica||'').trim() || SIN_CLINICA; }
 function resumen(lista){
   const pagos={Efectivo:0,Transferencia:0,Tarjeta:0,Otro:0};
@@ -126,7 +140,7 @@ function reportePNG({titulo,subtitulo,resumenLineas=[],columnas=[],filas=[],arch
 }
 
 const ICONS={dashboard:'▦',pacientes:'◉',comisiones:'$',cortes:'▤',clinicas:'✚',respaldo:'↧'};
-const TITULOS={dashboard:'Panel de control',pacientes:'Pacientes',comisiones:'Comisiones',cortes:'Cortes semanales',clinicas:'Clínicas y doctores',respaldo:'Respaldo'};
+const TITULOS={dashboard:'Panel de control',pacientes:'Pacientes',comisiones:'Comisiones',cortes:'Reportes',clinicas:'Clínicas y doctores',respaldo:'Respaldo'};
 
 export default function App(){
   const [seccion,setSeccion]=useState('dashboard');
@@ -138,6 +152,7 @@ export default function App(){
   const [filtro,setFiltro]=useState('semana');
   const [mesCom,setMesCom]=useState(mesActual());
   const [semanaCorte,setSemanaCorte]=useState(lunesDeFecha(hoy()));
+  const [fechaDia,setFechaDia]=useState(hoy());
   const [mesHist,setMesHist]=useState(mesActual());
   const [clinicaAdmin,setClinicaAdmin]=useState('');
   const [nuevaClinica,setNuevaClinica]=useState('');
@@ -160,14 +175,32 @@ export default function App(){
   const resMes=useMemo(()=>resumen(regsMes),[regsMes]);
   const regsCorte=useMemo(()=>registros.filter(r=>r.fecha&&lunesDeFecha(r.fecha)===semanaCorte).sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||'')),[registros,semanaCorte]);
   const resCorte=useMemo(()=>resumen(regsCorte),[regsCorte]);
+  const regsDia=useMemo(()=>registros.filter(r=>r.fecha===fechaDia).sort((a,b)=>Number(a.id||0)-Number(b.id||0)),[registros,fechaDia]);
+  const resDia=useMemo(()=>resumen(regsDia),[regsDia]);
+  const totalRadiografiasDia=useMemo(()=>regsDia.reduce((s,r)=>s+(r.estudio==='Panorámica y Lateral'?2:1),0),[regsDia]);
   const regsHist=useMemo(()=>registros.filter(r=>(r.fecha||'').slice(0,7)===mesHist).sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||'')),[registros,mesHist]);
   const regsCom=useMemo(()=>registros.filter(r=>(r.fecha||'').slice(0,7)===mesCom&&comisionRegistro(r)>0),[registros,mesCom]);
   const comClinicas=useMemo(()=>{
-    const map={}; for(const r of regsCom){const n=clinicaRegistro(r);if(!map[n])map[n]={nombre:n,pacientes:0,digital:0,impresa:0,total:0};const c=comisionRegistro(r);map[n].pacientes++;map[n].total+=c;if(r.tipoEntrega==='Impresa')map[n].impresa+=c;else map[n].digital+=c}return Object.values(map).sort((a,b)=>a.nombre.localeCompare(b.nombre));
-  },[regsCom]);
+    const map={};
+    for(const r of regsCom){
+      const clinica=clinicaRegistro(r), doctor=doctorRegistro(r,clinicas), valor=comisionRegistro(r);
+      if(!map[clinica]) map[clinica]={nombre:clinica,pacientes:0,digital:0,impresa:0,total:0,doctores:{}};
+      map[clinica].pacientes++; map[clinica].total+=valor;
+      if(r.tipoEntrega==='Impresa') map[clinica].impresa+=valor; else map[clinica].digital+=valor;
+      if(!map[clinica].doctores[doctor]) map[clinica].doctores[doctor]={nombre:doctor,pacientes:0,total:0};
+      map[clinica].doctores[doctor].pacientes++; map[clinica].doctores[doctor].total+=valor;
+    }
+    return Object.values(map).map(c=>({...c,doctoresLista:Object.values(c.doctores).sort((a,b)=>a.nombre.localeCompare(b.nombre))})).sort((a,b)=>a.nombre.localeCompare(b.nombre));
+  },[regsCom,clinicas]);
   const comDoctores=useMemo(()=>{
-    const map={};for(const r of regsCom){const n=doctorRegistro(r);if(!map[n])map[n]={nombre:n,pacientes:0,total:0,clinicas:{}};map[n].pacientes++;map[n].total+=comisionRegistro(r);const c=clinicaRegistro(r);map[n].clinicas[c]=(map[n].clinicas[c]||0)+comisionRegistro(r)}return Object.values(map).sort((a,b)=>a.nombre.localeCompare(b.nombre));
-  },[regsCom]);
+    const map={};
+    for(const r of regsCom){
+      const clinica=clinicaRegistro(r), doctor=doctorRegistro(r,clinicas), key=`${clinica}::${doctor}`, valor=comisionRegistro(r);
+      if(!map[key]) map[key]={nombre:doctor,clinica,pacientes:0,total:0};
+      map[key].pacientes++; map[key].total+=valor;
+    }
+    return Object.values(map).sort((a,b)=>a.clinica.localeCompare(b.clinica)||a.nombre.localeCompare(b.nombre));
+  },[regsCom,clinicas]);
   const totalComMes=useMemo(()=>regsCom.reduce((s,r)=>s+comisionRegistro(r),0),[regsCom]);
   const listaPacientes=useMemo(()=>{
     let list=[...registros];
@@ -204,12 +237,24 @@ export default function App(){
   function quitarDoctor(){if(!clinicaAdmin||!doctorAdmin||!confirm(`¿Quitar a ${doctorAdmin} del catálogo?`))return;setClinicas(cs=>cs.map(c=>c.nombre===clinicaAdmin?{...c,doctores:c.doctores.filter(d=>d!==doctorAdmin)}:c));setDoctorAdmin('')}
 
   function descargarCorte(){
-    reportePNG({titulo:'Corte semanal',subtitulo:etiquetaSemana(semanaCorte),resumenLineas:[`Pacientes: ${resCorte.pacientes}  •  Ingresos: ${dinero(resCorte.ingresos)}`,`Cobrado: ${dinero(resCorte.cobrado)}  •  Pendiente: ${dinero(resCorte.pendiente)}`,`Comisiones: ${dinero(resCorte.comisiones)}  •  Sin comisión: ${resCorte.sinComision}`],columnas:[{titulo:'Fecha',peso:1,valor:r=>r.fecha},{titulo:'Paciente',peso:2.1,valor:r=>r.nombre},{titulo:'Estudio',peso:1.7,valor:r=>r.estudio},{titulo:'Clínica',peso:1.8,valor:r=>clinicaRegistro(r)},{titulo:'Cobro',peso:1,valor:r=>dinero(precioRegistro(r))},{titulo:'Comisión',peso:1,valor:r=>dinero(comisionRegistro(r))}],filas:regsCorte,archivo:`corte-${semanaCorte}.png`});
+    reportePNG({titulo:'Corte semanal',subtitulo:etiquetaSemana(semanaCorte),resumenLineas:[`Pacientes: ${resCorte.pacientes}  •  Ingresos: ${dinero(resCorte.ingresos)}`,`Cobrado: ${dinero(resCorte.cobrado)}  •  Pendiente: ${dinero(resCorte.pendiente)}`,`Comisiones: ${dinero(resCorte.comisiones)}  •  Sin comisión: ${resCorte.sinComision}`],columnas:[{titulo:'Fecha',peso:1,valor:r=>r.fecha},{titulo:'Paciente',peso:2.1,valor:r=>r.nombre},{titulo:'Estudio',peso:1.7,valor:r=>r.estudio},{titulo:'Clínica',peso:1.8,valor:r=>clinicaRegistro(r)},{titulo:'Doctor',peso:1.8,valor:r=>doctorRegistro(r,clinicas)},{titulo:'Cobro',peso:1,valor:r=>dinero(precioRegistro(r))},{titulo:'Comisión',peso:1,valor:r=>dinero(comisionRegistro(r))}],filas:regsCorte,archivo:`corte-${semanaCorte}.png`});
   }
-  function descargarComClinicas(){reportePNG({titulo:'Comisiones por clínica',subtitulo:nombreMes(mesCom),resumenLineas:[`Total mensual de comisiones: ${dinero(totalComMes)}`,`Clínicas con comisión: ${comClinicas.length}`],columnas:[{titulo:'Clínica',peso:2.5,clave:'nombre'},{titulo:'Pacientes',peso:1,clave:'pacientes'},{titulo:'Digital',peso:1,valor:r=>dinero(r.digital)},{titulo:'Impresa',peso:1,valor:r=>dinero(r.impresa)},{titulo:'Total',peso:1.2,valor:r=>dinero(r.total)}],filas:comClinicas,archivo:`comisiones-clinicas-${mesCom}.png`})}
-  function descargarComDoctores(){reportePNG({titulo:'Comisiones por dentista',subtitulo:nombreMes(mesCom),resumenLineas:[`Total mensual de comisiones: ${dinero(totalComMes)}`,`Dentistas con comisión: ${comDoctores.length}`],columnas:[{titulo:'Dentista',peso:2.7,clave:'nombre'},{titulo:'Pacientes',peso:1,clave:'pacientes'},{titulo:'Clínicas',peso:2.4,valor:r=>Object.keys(r.clinicas).join(', ')},{titulo:'Total',peso:1.2,valor:r=>dinero(r.total)}],filas:comDoctores,archivo:`comisiones-dentistas-${mesCom}.png`})}
-  function descargarClinicaIndividual(c){reportePNG({titulo:`Comisión · ${c.nombre}`,subtitulo:nombreMes(mesCom),resumenLineas:[`Pacientes con comisión: ${c.pacientes}`,`Digital: ${dinero(c.digital)}  •  Impresa: ${dinero(c.impresa)}`,`Total a pagar: ${dinero(c.total)}`],archivo:`comision-${slug(c.nombre)}-${mesCom}.png`})}
-  function descargarDoctorIndividual(d){reportePNG({titulo:`Comisión · ${d.nombre}`,subtitulo:nombreMes(mesCom),resumenLineas:[`Pacientes con comisión: ${d.pacientes}`,`Clínicas: ${Object.keys(d.clinicas).join(', ')||'—'}`,`Total a pagar: ${dinero(d.total)}`],archivo:`comision-${slug(d.nombre)}-${mesCom}.png`})}
+  function descargarRadiografiasDia(){
+    reportePNG({titulo:'Radiografías del día',subtitulo:fechaLarga(fechaDia),resumenLineas:[`Pacientes atendidos: ${regsDia.length}  •  Radiografías: ${totalRadiografiasDia}`,`Ingresos registrados: ${dinero(resDia.ingresos)}  •  Cobrado: ${dinero(resDia.cobrado)}`],columnas:[{titulo:'Paciente',peso:2.2,valor:r=>r.nombre||'SIN NOMBRE'},{titulo:'Estudio',peso:1.9,valor:r=>r.estudio},{titulo:'Clínica',peso:1.8,valor:r=>clinicaRegistro(r)},{titulo:'Doctor',peso:1.9,valor:r=>doctorRegistro(r,clinicas)},{titulo:'Entrega',peso:1,valor:r=>r.tipoEntrega||'Digital'},{titulo:'Pago',peso:1,valor:r=>r.estadoPago||'Pendiente'}],filas:regsDia,archivo:`radiografias-${fechaDia}.png`});
+  }
+  function descargarComClinicas(){
+    const filas=comClinicas.flatMap(c=>c.doctoresLista.map((d,i)=>({clinica:i===0?c.nombre:'',doctor:d.nombre,pacientes:d.pacientes,total:d.total})));
+    reportePNG({titulo:'Comisiones mensuales por clínica y doctor',subtitulo:nombreMes(mesCom),resumenLineas:[`Total mensual de comisiones: ${dinero(totalComMes)}`,`Clínicas con comisión: ${comClinicas.length}  •  Asignaciones de doctor: ${comDoctores.length}`],columnas:[{titulo:'Clínica',peso:2.2,clave:'clinica'},{titulo:'Doctor / Dentista',peso:2.5,clave:'doctor'},{titulo:'Pacientes',peso:1,clave:'pacientes'},{titulo:'Comisión',peso:1.2,valor:r=>dinero(r.total)}],filas,archivo:`comisiones-mensuales-${mesCom}.png`});
+  }
+  function descargarComDoctores(){
+    reportePNG({titulo:'Comisiones por doctor',subtitulo:nombreMes(mesCom),resumenLineas:[`Total mensual de comisiones: ${dinero(totalComMes)}`,`Asignaciones de doctor: ${comDoctores.length}`],columnas:[{titulo:'Clínica',peso:2.2,clave:'clinica'},{titulo:'Doctor / Dentista',peso:2.6,clave:'nombre'},{titulo:'Pacientes',peso:1,clave:'pacientes'},{titulo:'Total',peso:1.2,valor:r=>dinero(r.total)}],filas:comDoctores,archivo:`comisiones-doctores-${mesCom}.png`});
+  }
+  function descargarClinicaIndividual(c){
+    reportePNG({titulo:`Comisión · ${c.nombre}`,subtitulo:nombreMes(mesCom),resumenLineas:[`Pacientes con comisión: ${c.pacientes}`,`Digital: ${dinero(c.digital)}  •  Impresa: ${dinero(c.impresa)}`,`Total a pagar: ${dinero(c.total)}`],columnas:[{titulo:'Doctor / Dentista',peso:2.7,clave:'nombre'},{titulo:'Pacientes',peso:1,clave:'pacientes'},{titulo:'Comisión',peso:1.3,valor:r=>dinero(r.total)}],filas:c.doctoresLista,archivo:`comision-${slug(c.nombre)}-${mesCom}.png`});
+  }
+  function descargarDoctorIndividual(d){
+    reportePNG({titulo:`Comisión · ${d.nombre}`,subtitulo:`${d.clinica} · ${nombreMes(mesCom)}`,resumenLineas:[`Pacientes con comisión: ${d.pacientes}`,`Total a pagar: ${dinero(d.total)}`],archivo:`comision-${slug(d.clinica)}-${slug(d.nombre)}-${mesCom}.png`});
+  }
   function exportar(){descargarArchivo(`imadent-respaldo-${hoy()}.json`,JSON.stringify({version:2,fecha:new Date().toISOString(),registros,clinicas},null,2))}
   function importar(file){if(!file)return;const reader=new FileReader();reader.onload=()=>{try{const d=JSON.parse(String(reader.result||''));if(Array.isArray(d.registros))setRegistros(d.registros);if(Array.isArray(d.clinicas))setClinicas(mergeCatalogo(d.clinicas));alert('Respaldo restaurado correctamente.')}catch{alert('No se pudo leer el respaldo.')}};reader.readAsText(file)}
 
@@ -217,7 +262,7 @@ export default function App(){
 
   return <div className="app-shell">
     <aside className="sidebar">
-      <div className="brand"><div className="brand-mark">IM</div><div><strong>IMADENT</strong><span>Centro Radiológico Dental</span></div></div>
+      <div className="brand"><div className="brand-mark">IM</div><div><strong>IMADENT</strong><span>Centro Radiológico Dental · PRO v9</span></div></div>
       <nav className="nav-list">{Object.keys(TITULOS).map(k=><button key={k} className={`nav-item ${seccion===k?'active':''}`} onClick={()=>setSeccion(k)}><span className="nav-icon">{ICONS[k]}</span><span>{TITULOS[k]}</span></button>)}</nav>
       <div className="sidebar-foot"><span className="status-dot"/>Sistema activo<div>{fechaLarga(hoy())}</div></div>
     </aside>
@@ -255,15 +300,39 @@ export default function App(){
         </>}
 
         {seccion==='comisiones'&&<>
-          <section className="toolbar-card"><div><p className="eyebrow">Periodo</p><h2>Comisiones mensuales</h2></div><label className="compact-field"><span>Mes</span><select value={mesCom} onChange={e=>setMesCom(e.target.value)}>{meses.map(m=><option key={m} value={m}>{nombreMes(m)}</option>)}</select></label><div className="toolbar-total"><span>Total del mes</span><strong>{dinero(totalComMes)}</strong></div></section>
-          <section className="grid-2"><article className="panel"><div className="panel-head"><div><p className="eyebrow">Por clínica</p><h2>Resumen de clínicas</h2></div><button className="btn secondary" onClick={descargarComClinicas}>Descargar PNG</button></div><div className="cards-list">{comClinicas.map(c=><div className="commission-card" key={c.nombre}><div><b>{c.nombre}</b><small>{c.pacientes} pacientes · Digital {dinero(c.digital)} · Impresa {dinero(c.impresa)}</small></div><div className="commission-amount"><strong>{dinero(c.total)}</strong><button onClick={()=>descargarClinicaIndividual(c)}>PNG</button></div></div>)}{!comClinicas.length&&<div className="empty-card">Sin comisiones para este mes.</div>}</div></article>
-          <article className="panel"><div className="panel-head"><div><p className="eyebrow">Por dentista</p><h2>Resumen de dentistas</h2></div><button className="btn secondary" onClick={descargarComDoctores}>Descargar PNG</button></div><div className="cards-list">{comDoctores.map(d=><div className="commission-card" key={d.nombre}><div><b>{d.nombre}</b><small>{d.pacientes} pacientes · {Object.keys(d.clinicas).join(', ')}</small></div><div className="commission-amount"><strong>{dinero(d.total)}</strong><button onClick={()=>descargarDoctorIndividual(d)}>PNG</button></div></div>)}{!comDoctores.length&&<div className="empty-card">Sin comisiones para este mes.</div>}</div></article></section>
+          <section className="commission-hero">
+            <div><p className="eyebrow">Cierre mensual</p><h2>Comisiones por clínica y doctor</h2><p>Ve exactamente cuánto corresponde a cada dentista dentro de su clínica y descarga el reporte listo para entregar.</p></div>
+            <div className="commission-hero-total"><span>Total del mes</span><strong>{dinero(totalComMes)}</strong><small>{nombreMes(mesCom)}</small></div>
+          </section>
+          <section className="toolbar-card commission-toolbar"><label className="compact-field"><span>Mes</span><select value={mesCom} onChange={e=>setMesCom(e.target.value)}>{meses.map(m=><option key={m} value={m}>{nombreMes(m)}</option>)}</select></label><div className="button-row no-margin"><button className="btn primary" onClick={descargarComClinicas}>Descargar cierre mensual PNG</button><button className="btn secondary" onClick={descargarComDoctores}>PNG por doctores</button></div></section>
+          <section className="commission-grid">
+            {comClinicas.map(c=><article className="clinic-commission-card" key={c.nombre}>
+              <div className="clinic-commission-head"><div><span className="clinic-label">CLÍNICA</span><h3>{c.nombre}</h3><small>{c.pacientes} pacientes con comisión</small></div><div className="clinic-total"><span>Total clínica</span><strong>{dinero(c.total)}</strong><button onClick={()=>descargarClinicaIndividual(c)}>Descargar PNG</button></div></div>
+              <div className="doctor-breakdown">
+                <div className="doctor-breakdown-title"><span>Doctor / Dentista</span><span>Pacientes</span><span>Comisión</span></div>
+                {c.doctoresLista.map(d=><div className="doctor-breakdown-row" key={d.nombre}><div><span className="doctor-avatar">DR</span><b>{d.nombre}</b></div><span>{d.pacientes}</span><strong>{dinero(d.total)}</strong></div>)}
+                {!c.doctoresLista.length&&<div className="empty-card">No hay doctores asignados.</div>}
+              </div>
+            </article>)}
+            {!comClinicas.length&&<div className="empty-card wide">Sin comisiones para este mes.</div>}
+          </section>
+          <section className="panel"><div className="panel-head"><div><p className="eyebrow">Detalle general</p><h2>Todos los doctores del mes</h2></div></div><div className="table-wrap"><table><thead><tr><th>Clínica</th><th>Doctor / Dentista</th><th>Pacientes</th><th>Comisión</th><th></th></tr></thead><tbody>{comDoctores.map(d=><tr key={`${d.clinica}-${d.nombre}`}><td>{d.clinica}</td><td className="strong">{d.nombre}</td><td>{d.pacientes}</td><td><b>{dinero(d.total)}</b></td><td><button className="table-download" onClick={()=>descargarDoctorIndividual(d)}>PNG</button></td></tr>)}{!comDoctores.length&&<tr><td colSpan="5" className="empty">Sin comisiones para este mes.</td></tr>}</tbody></table></div></section>
         </>}
 
         {seccion==='cortes'&&<>
-          <section className="toolbar-card"><div><p className="eyebrow">Reporte para dirección</p><h2>Corte semanal</h2></div><label className="compact-field"><span>Semana</span><select value={semanaCorte} onChange={e=>setSemanaCorte(e.target.value)}>{semanas.map(s=><option key={s} value={s}>{etiquetaSemana(s)}</option>)}</select></label><button className="btn primary" onClick={descargarCorte}>Descargar corte PNG</button></section>
+          <section className="daily-report-card">
+            <div className="daily-report-icon">RX</div>
+            <div className="daily-report-copy"><p className="eyebrow">Reporte diario</p><h2>Radiografías tomadas por día</h2><p>Selecciona una fecha y descarga una imagen con todos los estudios realizados ese día.</p></div>
+            <label className="compact-field daily-date"><span>Fecha</span><input type="date" value={fechaDia} onChange={e=>setFechaDia(e.target.value)}/></label>
+            <div className="daily-count"><span>Radiografías</span><strong>{totalRadiografiasDia}</strong><small>{regsDia.length} pacientes</small></div>
+            <button className="btn primary big" onClick={descargarRadiografiasDia}>Descargar PNG del día</button>
+          </section>
+          <section className="panel daily-table-panel"><div className="panel-head"><div><p className="eyebrow">Detalle diario</p><h2>{fechaLarga(fechaDia)}</h2></div><span className="result-pill">{regsDia.length} pacientes · {totalRadiografiasDia} radiografías</span></div><div className="table-wrap"><table><thead><tr><th>Paciente</th><th>Estudio</th><th>Clínica</th><th>Doctor</th><th>Entrega</th><th>Estado</th></tr></thead><tbody>{regsDia.map(r=><tr key={r.id}><td className="strong">{r.nombre||'SIN NOMBRE'}</td><td>{r.estudio}</td><td>{clinicaRegistro(r)}</td><td>{doctorRegistro(r,clinicas)}</td><td>{r.tipoEntrega||'Digital'}</td><td><span className={`badge ${r.estadoPago==='Pagado'?'ok':'warn'}`}>{r.estadoPago||'Pendiente'}</span></td></tr>)}{!regsDia.length&&<tr><td colSpan="6" className="empty">No hay radiografías registradas en esta fecha.</td></tr>}</tbody></table></div></section>
+
+          <section className="section-divider"><span>CORTE SEMANAL</span></section>
+          <section className="toolbar-card"><div><p className="eyebrow">Reporte para dirección</p><h2>Corte semanal</h2></div><label className="compact-field"><span>Semana</span><select value={semanaCorte} onChange={e=>setSemanaCorte(e.target.value)}>{semanas.map(s=><option key={s} value={s}>{etiquetaSemana(s)}</option>)}</select></label><button className="btn secondary" onClick={descargarCorte}>Descargar corte semanal PNG</button></section>
           <section className="stats-grid cut-stats">{[['Pacientes',resCorte.pacientes],['Ingresos',dinero(resCorte.ingresos)],['Cobrado',dinero(resCorte.cobrado)],['Pendiente',dinero(resCorte.pendiente)],['Comisiones',dinero(resCorte.comisiones)]].map(([a,b])=><article className="stat-card" key={a}><span>{a}</span><strong>{b}</strong></article>)}</section>
-          <section className="panel"><div className="panel-head"><div><p className="eyebrow">Detalle</p><h2>{etiquetaSemana(semanaCorte)}</h2></div></div><div className="table-wrap"><table><thead><tr><th>Fecha</th><th>Paciente</th><th>Estudio</th><th>Clínica</th><th>Doctor</th><th>Total</th><th>Comisión</th></tr></thead><tbody>{regsCorte.map(r=><tr key={r.id}><td>{r.fecha}</td><td className="strong">{r.nombre}</td><td>{r.estudio}</td><td>{clinicaRegistro(r)}</td><td>{doctorRegistro(r)}</td><td>{dinero(precioRegistro(r))}</td><td>{dinero(comisionRegistro(r))}</td></tr>)}{!regsCorte.length&&<tr><td colSpan="7" className="empty">No hay registros en esta semana.</td></tr>}</tbody></table></div></section>
+          <section className="panel"><div className="panel-head"><div><p className="eyebrow">Detalle semanal</p><h2>{etiquetaSemana(semanaCorte)}</h2></div></div><div className="table-wrap"><table><thead><tr><th>Fecha</th><th>Paciente</th><th>Estudio</th><th>Clínica</th><th>Doctor</th><th>Total</th><th>Comisión</th></tr></thead><tbody>{regsCorte.map(r=><tr key={r.id}><td>{r.fecha}</td><td className="strong">{r.nombre}</td><td>{r.estudio}</td><td>{clinicaRegistro(r)}</td><td>{doctorRegistro(r,clinicas)}</td><td>{dinero(precioRegistro(r))}</td><td>{dinero(comisionRegistro(r))}</td></tr>)}{!regsCorte.length&&<tr><td colSpan="7" className="empty">No hay registros en esta semana.</td></tr>}</tbody></table></div></section>
         </>}
 
         {seccion==='clinicas'&&<>
