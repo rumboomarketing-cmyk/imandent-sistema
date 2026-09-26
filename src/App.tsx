@@ -1,4 +1,4 @@
-// IMADENT PRO v9 · comisiones por clínica/doctor + reporte diario PNG + interfaz ejecutiva
+// IMADENT PRO v10 · formas de pago + filtros + cortes semanales detallados
 // @ts-nocheck
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 
@@ -173,6 +173,16 @@ export default function App(){
   const regsMes=useMemo(()=>registros.filter(r=>(r.fecha||'').slice(0,7)===mesActual()),[registros]);
   const resSemana=useMemo(()=>resumen(regsSemana),[regsSemana]);
   const resMes=useMemo(()=>resumen(regsMes),[regsMes]);
+  const pagosSemana=useMemo(()=>{
+    const base={Efectivo:{monto:0,pacientes:0},Transferencia:{monto:0,pacientes:0},Tarjeta:{monto:0,pacientes:0},Otro:{monto:0,pacientes:0}};
+    for(const r of regsSemana){
+      if(r.estadoPago!=='Pagado') continue;
+      const tipo=['Efectivo','Transferencia','Tarjeta'].includes(r.tipoPago)?r.tipoPago:'Otro';
+      base[tipo].pacientes++;
+      base[tipo].monto+=precioRegistro(r);
+    }
+    return base;
+  },[regsSemana]);
   const regsCorte=useMemo(()=>registros.filter(r=>r.fecha&&lunesDeFecha(r.fecha)===semanaCorte).sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||'')),[registros,semanaCorte]);
   const resCorte=useMemo(()=>resumen(regsCorte),[regsCorte]);
   const regsDia=useMemo(()=>registros.filter(r=>r.fecha===fechaDia).sort((a,b)=>Number(a.id||0)-Number(b.id||0)),[registros,fechaDia]);
@@ -208,6 +218,9 @@ export default function App(){
     if(filtro==='semana')list=list.filter(r=>r.fecha&&lunesDeFecha(r.fecha)===semanaActual);
     if(filtro==='mes')list=list.filter(r=>(r.fecha||'').slice(0,7)===mesActual());
     if(filtro==='pendiente')list=list.filter(r=>r.estadoPago!=='Pagado');
+    if(filtro==='tarjeta')list=list.filter(r=>r.estadoPago==='Pagado'&&r.tipoPago==='Tarjeta');
+    if(filtro==='transferencia')list=list.filter(r=>r.estadoPago==='Pagado'&&r.tipoPago==='Transferencia');
+    if(filtro==='efectivo')list=list.filter(r=>r.estadoPago==='Pagado'&&r.tipoPago==='Efectivo');
     if(filtro==='sincomision')list=list.filter(r=>!generaComisionRegistro(r));
     if(busqueda.trim()){const q=normalizar(busqueda);list=list.filter(r=>[r.nombre,r.telefono,clinicaRegistro(r),doctorRegistro(r),r.estudio].some(v=>normalizar(v||'').includes(q)))}
     return list.sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||'')||Number(b.id||0)-Number(a.id||0));
@@ -237,10 +250,11 @@ export default function App(){
   function quitarDoctor(){if(!clinicaAdmin||!doctorAdmin||!confirm(`¿Quitar a ${doctorAdmin} del catálogo?`))return;setClinicas(cs=>cs.map(c=>c.nombre===clinicaAdmin?{...c,doctores:c.doctores.filter(d=>d!==doctorAdmin)}:c));setDoctorAdmin('')}
 
   function descargarCorte(){
-    reportePNG({titulo:'Corte semanal',subtitulo:etiquetaSemana(semanaCorte),resumenLineas:[`Pacientes: ${resCorte.pacientes}  •  Ingresos: ${dinero(resCorte.ingresos)}`,`Cobrado: ${dinero(resCorte.cobrado)}  •  Pendiente: ${dinero(resCorte.pendiente)}`,`Comisiones: ${dinero(resCorte.comisiones)}  •  Sin comisión: ${resCorte.sinComision}`],columnas:[{titulo:'Fecha',peso:1,valor:r=>r.fecha},{titulo:'Paciente',peso:2.1,valor:r=>r.nombre},{titulo:'Estudio',peso:1.7,valor:r=>r.estudio},{titulo:'Clínica',peso:1.8,valor:r=>clinicaRegistro(r)},{titulo:'Doctor',peso:1.8,valor:r=>doctorRegistro(r,clinicas)},{titulo:'Cobro',peso:1,valor:r=>dinero(precioRegistro(r))},{titulo:'Comisión',peso:1,valor:r=>dinero(comisionRegistro(r))}],filas:regsCorte,archivo:`corte-${semanaCorte}.png`});
+    const pagos=resumen(regsCorte).pagos;
+    reportePNG({titulo:'Corte semanal',subtitulo:etiquetaSemana(semanaCorte),resumenLineas:[`Pacientes: ${resCorte.pacientes}  •  Ingresos: ${dinero(resCorte.ingresos)}`,`Cobrado: ${dinero(resCorte.cobrado)}  •  Pendiente: ${dinero(resCorte.pendiente)}`,`Efectivo: ${dinero(pagos.Efectivo)}  •  Transferencia: ${dinero(pagos.Transferencia)}  •  Tarjeta: ${dinero(pagos.Tarjeta)}`,`Comisiones: ${dinero(resCorte.comisiones)}  •  Sin comisión: ${resCorte.sinComision}`],columnas:[{titulo:'Fecha',peso:1,valor:r=>r.fecha},{titulo:'Paciente',peso:1.9,valor:r=>r.nombre},{titulo:'Estudio',peso:1.5,valor:r=>r.estudio},{titulo:'Clínica',peso:1.5,valor:r=>clinicaRegistro(r)},{titulo:'Doctor',peso:1.5,valor:r=>doctorRegistro(r,clinicas)},{titulo:'Forma de pago',peso:1.2,valor:r=>r.estadoPago==='Pagado'?(r.tipoPago||'Otro'):'Pendiente'},{titulo:'Cobro',peso:1,valor:r=>dinero(precioRegistro(r))},{titulo:'Comisión',peso:1,valor:r=>dinero(comisionRegistro(r))}],filas:regsCorte,archivo:`corte-${semanaCorte}.png`});
   }
   function descargarRadiografiasDia(){
-    reportePNG({titulo:'Radiografías del día',subtitulo:fechaLarga(fechaDia),resumenLineas:[`Pacientes atendidos: ${regsDia.length}  •  Radiografías: ${totalRadiografiasDia}`,`Ingresos registrados: ${dinero(resDia.ingresos)}  •  Cobrado: ${dinero(resDia.cobrado)}`],columnas:[{titulo:'Paciente',peso:2.2,valor:r=>r.nombre||'SIN NOMBRE'},{titulo:'Estudio',peso:1.9,valor:r=>r.estudio},{titulo:'Clínica',peso:1.8,valor:r=>clinicaRegistro(r)},{titulo:'Doctor',peso:1.9,valor:r=>doctorRegistro(r,clinicas)},{titulo:'Entrega',peso:1,valor:r=>r.tipoEntrega||'Digital'},{titulo:'Pago',peso:1,valor:r=>r.estadoPago||'Pendiente'}],filas:regsDia,archivo:`radiografias-${fechaDia}.png`});
+    reportePNG({titulo:'Radiografías del día',subtitulo:fechaLarga(fechaDia),resumenLineas:[`Pacientes atendidos: ${regsDia.length}  •  Radiografías: ${totalRadiografiasDia}`,`Ingresos registrados: ${dinero(resDia.ingresos)}  •  Cobrado: ${dinero(resDia.cobrado)}`],columnas:[{titulo:'Paciente',peso:2,valor:r=>r.nombre||'SIN NOMBRE'},{titulo:'Estudio',peso:1.7,valor:r=>r.estudio},{titulo:'Clínica',peso:1.6,valor:r=>clinicaRegistro(r)},{titulo:'Doctor',peso:1.7,valor:r=>doctorRegistro(r,clinicas)},{titulo:'Entrega',peso:1,valor:r=>r.tipoEntrega||'Digital'},{titulo:'Forma de pago',peso:1.2,valor:r=>r.estadoPago==='Pagado'?(r.tipoPago||'Otro'):'Pendiente'},{titulo:'Estado',peso:1,valor:r=>r.estadoPago||'Pendiente'}],filas:regsDia,archivo:`radiografias-${fechaDia}.png`});
   }
   function descargarComClinicas(){
     const filas=comClinicas.flatMap(c=>c.doctoresLista.map((d,i)=>({clinica:i===0?c.nombre:'',doctor:d.nombre,pacientes:d.pacientes,total:d.total})));
@@ -262,7 +276,7 @@ export default function App(){
 
   return <div className="app-shell">
     <aside className="sidebar">
-      <div className="brand"><div className="brand-mark">IM</div><div><strong>IMADENT</strong><span>Centro Radiológico Dental · PRO v9</span></div></div>
+      <div className="brand"><div className="brand-mark">IM</div><div><strong>IMADENT</strong><span>Centro Radiológico Dental · PRO v10</span></div></div>
       <nav className="nav-list">{Object.keys(TITULOS).map(k=><button key={k} className={`nav-item ${seccion===k?'active':''}`} onClick={()=>setSeccion(k)}><span className="nav-icon">{ICONS[k]}</span><span>{TITULOS[k]}</span></button>)}</nav>
       <div className="sidebar-foot"><span className="status-dot"/>Sistema activo<div>{fechaLarga(hoy())}</div></div>
     </aside>
@@ -274,7 +288,14 @@ export default function App(){
         {seccion==='dashboard'&&<>
           <section className="hero-card"><div><span className="hero-kicker">Resumen operativo</span><h2>Todo el centro, en una sola vista.</h2><p>Control semanal de pacientes, ingresos, pagos y comisiones.</p></div><div className="hero-week"><span>Semana actual</span><strong>{etiquetaSemana(semanaActual)}</strong></div></section>
           <section className="stats-grid">{stats.map(([a,b,c],i)=><article className={`stat-card stat-${i}`} key={a}><div className="stat-top"><span>{a}</span><span className="stat-dot">•</span></div><strong>{b}</strong><small>{c}</small></article>)}</section>
-          <section className="grid-2"><article className="panel"><div className="panel-head"><div><p className="eyebrow">Actividad reciente</p><h2>Pacientes de esta semana</h2></div><button className="btn ghost" onClick={()=>setSeccion('pacientes')}>Ver todos</button></div><div className="table-wrap"><table><thead><tr><th>Fecha</th><th>Paciente</th><th>Estudio</th><th>Clínica</th><th>Total</th></tr></thead><tbody>{regsSemana.slice(0,7).map(r=><tr key={r.id}><td>{r.fecha}</td><td className="strong">{r.nombre}</td><td>{r.estudio}</td><td>{clinicaRegistro(r)}</td><td>{dinero(precioRegistro(r))}</td></tr>)}{!regsSemana.length&&<tr><td colSpan="5" className="empty">No hay pacientes esta semana.</td></tr>}</tbody></table></div></article>
+          <section className="payment-overview"><div className="payment-overview-head"><div><p className="eyebrow">Formas de pago · esta semana</p><h2>Control de cobros</h2></div><span>Solo pagos confirmados</span></div><div className="payment-cards">
+            {[
+              ['Efectivo','efectivo',pagosSemana.Efectivo,'EF'],
+              ['Transferencia','transferencia',pagosSemana.Transferencia,'TR'],
+              ['Tarjeta','tarjeta',pagosSemana.Tarjeta,'TJ']
+            ].map(([nombre,filtroPago,data,icono])=><button className={`payment-card payment-${filtroPago}`} key={nombre} onClick={()=>{setFiltro(filtroPago);setSeccion('pacientes')}}><span className="payment-icon">{icono}</span><div><small>{nombre}</small><strong>{dinero(data.monto)}</strong><em>{data.pacientes} pacientes</em></div><span className="payment-arrow">›</span></button>)}
+          </div></section>
+          <section className="grid-2"><article className="panel"><div className="panel-head"><div><p className="eyebrow">Actividad reciente</p><h2>Pacientes de esta semana</h2></div><button className="btn ghost" onClick={()=>setSeccion('pacientes')}>Ver todos</button></div><div className="table-wrap"><table><thead><tr><th>Fecha</th><th>Paciente</th><th>Estudio</th><th>Forma de pago</th><th>Total</th></tr></thead><tbody>{regsSemana.slice(0,7).map(r=><tr key={r.id}><td>{r.fecha}</td><td className="strong">{r.nombre}</td><td>{r.estudio}</td><td><span className={`payment-badge ${normalizar(r.tipoPago||'otro')}`}>{r.estadoPago==='Pagado'?(r.tipoPago||'Otro'):'Pendiente'}</span></td><td>{dinero(precioRegistro(r))}</td></tr>)}{!regsSemana.length&&<tr><td colSpan="5" className="empty">No hay pacientes esta semana.</td></tr>}</tbody></table></div></article>
           <article className="panel"><div className="panel-head"><div><p className="eyebrow">Mes actual</p><h2>{nombreMes(mesActual())}</h2></div></div><div className="mini-summary"><div><span>Pacientes</span><strong>{resMes.pacientes}</strong></div><div><span>Ingresos</span><strong>{dinero(resMes.ingresos)}</strong></div><div><span>Comisiones</span><strong>{dinero(resMes.comisiones)}</strong></div><div><span>Pendiente</span><strong>{dinero(resMes.pendiente)}</strong></div></div><div className="quick-actions"><button className="quick" onClick={()=>setSeccion('cortes')}><span>▤</span><div><b>Generar corte</b><small>Descargar semana en PNG</small></div></button><button className="quick" onClick={()=>setSeccion('comisiones')}><span>$</span><div><b>Ver comisiones</b><small>Clínicas y dentistas</small></div></button></div></article></section>
         </>}
 
@@ -296,7 +317,9 @@ export default function App(){
             <div className="form-footer"><div className="price-preview"><span>Precio del estudio</span><strong>{dinero(PRECIOS[form.estudio])}</strong><small>{form.generaComision?`Comisión: ${dinero(COMISIONES[form.tipoEntrega])}`:'Sin comisión'}</small></div><button className="btn primary big" onClick={guardarPaciente}>{editId!==null?'Guardar cambios':'Guardar paciente'}</button></div>
           </section>
 
-          <section className="panel"><div className="panel-head stack-mobile"><div><p className="eyebrow">Historial</p><h2>Pacientes registrados</h2></div><div className="search-box"><span>⌕</span><input value={busqueda} onChange={e=>setBusqueda(e.target.value)} placeholder="Buscar paciente, clínica o doctor"/></div></div><div className="filter-row">{[['hoy','Hoy'],['semana','Esta semana'],['mes','Este mes'],['pendiente','Pendientes'],['sincomision','Sin comisión'],['todos','Todos']].map(([v,l])=><button key={v} className={`chip ${filtro===v?'active':''}`} onClick={()=>setFiltro(v)}>{l}</button>)}</div><div className="table-wrap"><table><thead><tr><th>Fecha</th><th>Paciente</th><th>Estudio</th><th>Clínica</th><th>Doctor</th><th>Estado</th><th>Comisión</th><th></th></tr></thead><tbody>{listaPacientes.map(r=><tr key={r.id}><td>{r.fecha||'—'}</td><td className="strong">{r.nombre||'SIN NOMBRE'}</td><td>{r.estudio}</td><td>{clinicaRegistro(r)}</td><td>{doctorRegistro(r)}</td><td><span className={`badge ${r.estadoPago==='Pagado'?'ok':'warn'}`}>{r.estadoPago||'Pendiente'}</span></td><td>{generaComisionRegistro(r)?dinero(comisionRegistro(r)):<span className="badge neutral">No</span>}</td><td><div className="row-actions"><button onClick={()=>editarPaciente(r)}>Editar</button><button className="danger-link" onClick={()=>eliminarPaciente(r.id)}>Eliminar</button></div></td></tr>)}{!listaPacientes.length&&<tr><td colSpan="8" className="empty">No hay registros para este filtro.</td></tr>}</tbody></table></div></section>
+          <section className="panel"><div className="panel-head stack-mobile"><div><p className="eyebrow">Historial</p><h2>Pacientes registrados</h2></div><div className="search-box"><span>⌕</span><input value={busqueda} onChange={e=>setBusqueda(e.target.value)} placeholder="Buscar paciente, clínica o doctor"/></div></div>
+            <div className="filter-groups"><div><span className="filter-label">Periodo</span><div className="filter-row">{[['hoy','Hoy'],['semana','Esta semana'],['mes','Este mes'],['pendiente','Pendientes'],['sincomision','Sin comisión'],['todos','Todos']].map(([v,l])=><button key={v} className={`chip ${filtro===v?'active':''}`} onClick={()=>setFiltro(v)}>{l}</button>)}</div></div><div><span className="filter-label">Forma de pago</span><div className="filter-row payment-filter-row">{[['efectivo','Efectivo'],['transferencia','Transferencia'],['tarjeta','Tarjeta']].map(([v,l])=><button key={v} className={`chip payment-chip ${filtro===v?'active':''}`} onClick={()=>setFiltro(v)}>{l}</button>)}</div></div></div>
+            <div className="table-wrap"><table><thead><tr><th>Fecha</th><th>Paciente</th><th>Estudio</th><th>Clínica</th><th>Doctor</th><th>Forma de pago</th><th>Estado</th><th>Comisión</th><th></th></tr></thead><tbody>{listaPacientes.map(r=><tr key={r.id}><td>{r.fecha||'—'}</td><td className="strong">{r.nombre||'SIN NOMBRE'}</td><td>{r.estudio}</td><td>{clinicaRegistro(r)}</td><td>{doctorRegistro(r,clinicas)}</td><td><span className={`payment-badge ${normalizar(r.tipoPago||'otro')}`}>{r.tipoPago||'Otro'}</span></td><td><span className={`badge ${r.estadoPago==='Pagado'?'ok':'warn'}`}>{r.estadoPago||'Pendiente'}</span></td><td>{generaComisionRegistro(r)?dinero(comisionRegistro(r)):<span className="badge neutral">No</span>}</td><td><div className="row-actions"><button onClick={()=>editarPaciente(r)}>Editar</button><button className="danger-link" onClick={()=>eliminarPaciente(r.id)}>Eliminar</button></div></td></tr>)}{!listaPacientes.length&&<tr><td colSpan="9" className="empty">No hay registros para este filtro.</td></tr>}</tbody></table></div></section>
         </>}
 
         {seccion==='comisiones'&&<>
@@ -327,12 +350,19 @@ export default function App(){
             <div className="daily-count"><span>Radiografías</span><strong>{totalRadiografiasDia}</strong><small>{regsDia.length} pacientes</small></div>
             <button className="btn primary big" onClick={descargarRadiografiasDia}>Descargar PNG del día</button>
           </section>
-          <section className="panel daily-table-panel"><div className="panel-head"><div><p className="eyebrow">Detalle diario</p><h2>{fechaLarga(fechaDia)}</h2></div><span className="result-pill">{regsDia.length} pacientes · {totalRadiografiasDia} radiografías</span></div><div className="table-wrap"><table><thead><tr><th>Paciente</th><th>Estudio</th><th>Clínica</th><th>Doctor</th><th>Entrega</th><th>Estado</th></tr></thead><tbody>{regsDia.map(r=><tr key={r.id}><td className="strong">{r.nombre||'SIN NOMBRE'}</td><td>{r.estudio}</td><td>{clinicaRegistro(r)}</td><td>{doctorRegistro(r,clinicas)}</td><td>{r.tipoEntrega||'Digital'}</td><td><span className={`badge ${r.estadoPago==='Pagado'?'ok':'warn'}`}>{r.estadoPago||'Pendiente'}</span></td></tr>)}{!regsDia.length&&<tr><td colSpan="6" className="empty">No hay radiografías registradas en esta fecha.</td></tr>}</tbody></table></div></section>
+          <section className="panel daily-table-panel"><div className="panel-head"><div><p className="eyebrow">Detalle diario</p><h2>{fechaLarga(fechaDia)}</h2></div><span className="result-pill">{regsDia.length} pacientes · {totalRadiografiasDia} radiografías</span></div><div className="table-wrap"><table><thead><tr><th>Paciente</th><th>Estudio</th><th>Clínica</th><th>Doctor</th><th>Entrega</th><th>Forma de pago</th><th>Estado</th></tr></thead><tbody>{regsDia.map(r=><tr key={r.id}><td className="strong">{r.nombre||'SIN NOMBRE'}</td><td>{r.estudio}</td><td>{clinicaRegistro(r)}</td><td>{doctorRegistro(r,clinicas)}</td><td>{r.tipoEntrega||'Digital'}</td><td><span className={`payment-badge ${normalizar(r.tipoPago||'otro')}`}>{r.tipoPago||'Otro'}</span></td><td><span className={`badge ${r.estadoPago==='Pagado'?'ok':'warn'}`}>{r.estadoPago||'Pendiente'}</span></td></tr>)}{!regsDia.length&&<tr><td colSpan="7" className="empty">No hay radiografías registradas en esta fecha.</td></tr>}</tbody></table></div></section>
 
           <section className="section-divider"><span>CORTE SEMANAL</span></section>
           <section className="toolbar-card"><div><p className="eyebrow">Reporte para dirección</p><h2>Corte semanal</h2></div><label className="compact-field"><span>Semana</span><select value={semanaCorte} onChange={e=>setSemanaCorte(e.target.value)}>{semanas.map(s=><option key={s} value={s}>{etiquetaSemana(s)}</option>)}</select></label><button className="btn secondary" onClick={descargarCorte}>Descargar corte semanal PNG</button></section>
           <section className="stats-grid cut-stats">{[['Pacientes',resCorte.pacientes],['Ingresos',dinero(resCorte.ingresos)],['Cobrado',dinero(resCorte.cobrado)],['Pendiente',dinero(resCorte.pendiente)],['Comisiones',dinero(resCorte.comisiones)]].map(([a,b])=><article className="stat-card" key={a}><span>{a}</span><strong>{b}</strong></article>)}</section>
-          <section className="panel"><div className="panel-head"><div><p className="eyebrow">Detalle semanal</p><h2>{etiquetaSemana(semanaCorte)}</h2></div></div><div className="table-wrap"><table><thead><tr><th>Fecha</th><th>Paciente</th><th>Estudio</th><th>Clínica</th><th>Doctor</th><th>Total</th><th>Comisión</th></tr></thead><tbody>{regsCorte.map(r=><tr key={r.id}><td>{r.fecha}</td><td className="strong">{r.nombre}</td><td>{r.estudio}</td><td>{clinicaRegistro(r)}</td><td>{doctorRegistro(r,clinicas)}</td><td>{dinero(precioRegistro(r))}</td><td>{dinero(comisionRegistro(r))}</td></tr>)}{!regsCorte.length&&<tr><td colSpan="7" className="empty">No hay registros en esta semana.</td></tr>}</tbody></table></div></section>
+          <section className="payment-overview cut-payment-overview"><div className="payment-overview-head"><div><p className="eyebrow">Cobros de la semana</p><h2>Desglose por forma de pago</h2></div></div><div className="payment-cards">
+            {[
+              ['Efectivo',resCorte.pagos.Efectivo,'EF'],
+              ['Transferencia',resCorte.pagos.Transferencia,'TR'],
+              ['Tarjeta',resCorte.pagos.Tarjeta,'TJ']
+            ].map(([nombre,monto,icono])=><div className={`payment-card static payment-${normalizar(nombre)}`} key={nombre}><span className="payment-icon">{icono}</span><div><small>{nombre}</small><strong>{dinero(monto)}</strong></div></div>)}
+          </div></section>
+          <section className="panel"><div className="panel-head"><div><p className="eyebrow">Detalle semanal</p><h2>{etiquetaSemana(semanaCorte)}</h2></div></div><div className="table-wrap"><table><thead><tr><th>Fecha</th><th>Paciente</th><th>Estudio</th><th>Clínica</th><th>Doctor</th><th>Forma de pago</th><th>Total</th><th>Comisión</th></tr></thead><tbody>{regsCorte.map(r=><tr key={r.id}><td>{r.fecha}</td><td className="strong">{r.nombre}</td><td>{r.estudio}</td><td>{clinicaRegistro(r)}</td><td>{doctorRegistro(r,clinicas)}</td><td><span className={`payment-badge ${normalizar(r.tipoPago||'otro')}`}>{r.estadoPago==='Pagado'?(r.tipoPago||'Otro'):'Pendiente'}</span></td><td>{dinero(precioRegistro(r))}</td><td>{dinero(comisionRegistro(r))}</td></tr>)}{!regsCorte.length&&<tr><td colSpan="8" className="empty">No hay registros en esta semana.</td></tr>}</tbody></table></div></section>
         </>}
 
         {seccion==='clinicas'&&<>
